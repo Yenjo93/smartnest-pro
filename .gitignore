@@ -1,0 +1,9 @@
+node_modules/
+__pycache__/
+.DS_Store
+.claude/
+*.zip
+
+# Someone else's artwork: kept on this Mac only, never published
+/reference/
+custom_components/smartnest_pro/frontend/static/house-default.jpg
