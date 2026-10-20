@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
+import { keyed } from "lit/directives/keyed.js";
 import {
   mdiCheck,
   mdiClose,
@@ -62,6 +63,9 @@ export class SmartNestProPanel extends LitElement {
   @state() private config?: ProConfig;
   @state() private draft?: ProConfig;
   @state() private page: Page = "home";
+  /** +1 when the new page is further down the menu, -1 when it's above: the page slides in from that side. */
+  @state() private navDir = 1;
+  private navOrder: Page[] = [];
   @state() private room?: string;
   @state() private sheet?: SheetSpec;
   @state() private toastMsg?: string;
@@ -280,9 +284,15 @@ export class SmartNestProPanel extends LitElement {
   }
 
   private go(page: Page) {
+    if (page !== this.page) this.navDir = this.navOrder.indexOf(page) >= this.navOrder.indexOf(this.page) ? 1 : -1;
     this.page = page;
     this.sheet = undefined;
     this.renderRoot.querySelector("main")?.scrollTo({ top: 0 });
+  }
+
+  /** A fresh wrapper per page, so its entrance animation plays on every page change. */
+  private animated(page: unknown) {
+    return keyed(this.page, html`<div class="page" style="--dir: ${this.navDir}">${page}</div>`);
   }
 
   private renderPage(c: Ctx) {
@@ -313,7 +323,13 @@ export class SmartNestProPanel extends LitElement {
     const tabs = items.filter((n) => PHONE_TABS.includes(n.page));
     const rest = items.filter((n) => !PHONE_TABS.includes(n.page));
     const inMore = rest.some((n) => n.page === this.page);
+    const count = tabs.length + (rest.length ? 1 : 0);
+    const at = inMore ? tabs.length : tabs.findIndex((n) => n.page === this.page);
     return html`<nav class="tabbar glass">
+      <span
+        class="tab-ind"
+        style="width: calc((100% - 16px) / ${count}); transform: translateX(${at * 100 * (c.rtl ? -1 : 1)}%); opacity: ${at < 0 ? 0 : 1}"
+      ></span>
       ${tabs.map(
         (n) => html`<button class=${this.page === n.page ? "on" : ""} @click=${() => this.go(n.page)}>${icon(n.icon, 22)}<span>${n.label}</span></button>`,
       )}
@@ -389,7 +405,8 @@ export class SmartNestProPanel extends LitElement {
     this.dir = c.rtl ? "rtl" : "ltr";
     this.lang = c.lang;
 
-    if (!this.navItems(c).some((n) => n.page === this.page)) this.page = "home";
+    this.navOrder = this.navItems(c).map((n) => n.page);
+    if (!this.navOrder.includes(this.page)) this.page = "home";
     const page = this.renderPage(c);
 
     return html`
@@ -403,7 +420,7 @@ export class SmartNestProPanel extends LitElement {
                 : nothing}
               ${this.greeting(c)} ${this.ecoChip(c)}
             </header>
-            <main>${page}</main>
+            <main>${this.animated(page)}</main>
             ${this.tabbar(c)}
           </div>`
         : html`<div class="shell">
@@ -420,13 +437,16 @@ export class SmartNestProPanel extends LitElement {
               ${this.editControls(c)}
             </header>
             <nav class="rail glass">
-              ${this.navItems(c).map(
-                (n) => html`<button class=${this.page === n.page ? "on" : ""} aria-label=${n.label} title=${n.label} @click=${() => this.go(n.page)}>
-                  ${icon(n.icon, 20)}
-                </button>`,
-              )}
+              <div class="rail-scroll">
+                <span class="ind" style="transform: translateY(${this.navItems(c).findIndex((n) => n.page === this.page) * 58}px)"></span>
+                ${this.navItems(c).map(
+                  (n) => html`<button class=${this.page === n.page ? "on" : ""} aria-label=${n.label} title=${n.label} @click=${() => this.go(n.page)}>
+                    ${icon(n.icon, 20)}
+                  </button>`,
+                )}
+              </div>
             </nav>
-            <main>${page}</main>
+            <main>${this.animated(page)}</main>
           </div>`}
       <sn-sheet .spec=${this.sheet} .ctx=${c} ?phone=${this.phone} @close=${() => (this.sheet = this.sheet?.back)}></sn-sheet>
       ${this.toastMsg ? html`<div class="toast glass">${this.toastMsg}</div>` : nothing}
@@ -440,8 +460,11 @@ export class SmartNestProPanel extends LitElement {
       :host {
         display: block;
         position: relative;
+        /* dvh: the visible height on iPad and phones, so the panel never sits taller than the screen and drifts. */
         min-height: 100vh;
         height: 100vh;
+        min-height: 100dvh;
+        height: 100dvh;
         overflow: hidden;
         color: var(--sn-text-on-bg);
       }
@@ -612,21 +635,52 @@ export class SmartNestProPanel extends LitElement {
         display: flex;
         gap: 8px;
       }
+      /*
+       * The glass pill never scrolls itself: a blurred, rounded box that scrolls gets a square compositing layer
+       * drawn over its buttons. The scrolling happens in .rail-scroll inside it.
+       */
       .rail {
         align-self: start;
         max-height: 100%;
-        overflow-y: auto;
-        scrollbar-width: none;
+        display: flex;
+        width: 64px;
+        padding: 8px;
+        border-radius: 32px;
+        background: rgba(255, 255, 255, 0.14);
+        border-color: rgba(255, 255, 255, 0.25);
+        overflow: hidden;
+      }
+      .rail-scroll {
+        position: relative;
         display: grid;
         gap: 10px;
         justify-items: center;
-        width: 64px;
-        padding: 8px;
-        border-radius: 999px;
-        background: rgba(255, 255, 255, 0.14);
-        border-color: rgba(255, 255, 255, 0.25);
+        align-content: start;
+        width: 100%;
+        max-height: 100%;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: none;
+        border-radius: 24px;
+      }
+      .rail-scroll::-webkit-scrollbar {
+        display: none;
+      }
+      .ind {
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 48px;
+        height: 48px;
+        border-radius: 50%;
+        background: #fff;
+        box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.35);
+        transition: transform 0.45s cubic-bezier(0.3, 1.3, 0.5, 1);
       }
       .rail button {
+        position: relative;
+        z-index: 1;
+        transition: color 0.3s ease;
         display: grid;
         place-items: center;
         width: 48px;
@@ -638,9 +692,36 @@ export class SmartNestProPanel extends LitElement {
         cursor: pointer;
       }
       .rail button.on {
-        background: #fff;
         color: #1d1b19;
-        box-shadow: 0 6px 16px -6px rgba(0, 0, 0, 0.35);
+      }
+      .rail button:not(.on):hover {
+        background: rgba(255, 255, 255, 0.12);
+      }
+
+      /* Page change: the new page rises in from the side of the menu it came from. */
+      .page {
+        animation: page-in 0.5s cubic-bezier(0.2, 0.8, 0.2, 1) both;
+      }
+      .shell .page {
+        height: 100%;
+        --from: translate3d(0, calc(var(--dir) * 22px), 0) scale(0.985);
+      }
+      .shell-phone .page {
+        --from: translate3d(calc(var(--dir) * 32px), 0, 0);
+      }
+      :host([dir="rtl"]) .shell-phone .page {
+        --from: translate3d(calc(var(--dir) * -32px), 0, 0);
+      }
+      @keyframes page-in {
+        /* No filter here: a filtered ancestor would switch off the cards' glass blur for the length of the animation. */
+        from {
+          opacity: 0;
+          transform: var(--from);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
       }
       main {
         position: relative;
@@ -664,7 +745,8 @@ export class SmartNestProPanel extends LitElement {
           "climate devices side";
         gap: 20px;
         height: 100%;
-        min-height: 640px;
+        /* Below this the left column (greeting + energy) would spill onto the climate card: scroll instead. */
+        min-height: 780px;
       }
       .col-left {
         grid-area: left;
@@ -705,8 +787,6 @@ export class SmartNestProPanel extends LitElement {
       .col-side sn-room-panel {
         flex: 1;
         min-height: 0;
-        overflow: auto;
-        border-radius: var(--sn-radius);
       }
       .climate {
         grid-area: climate;
@@ -738,7 +818,6 @@ export class SmartNestProPanel extends LitElement {
         }
         .col-side sn-room-panel {
           flex: none;
-          overflow: visible;
         }
         .climate {
           align-self: start;
@@ -850,7 +929,18 @@ export class SmartNestProPanel extends LitElement {
         border-radius: 999px;
         background: var(--sn-glass-strong);
       }
+      .tab-ind {
+        position: absolute;
+        top: 8px;
+        bottom: 8px;
+        inset-inline-start: 8px;
+        border-radius: 999px;
+        background: rgba(255, 255, 255, 0.14);
+        transition: transform 0.45s cubic-bezier(0.3, 1.25, 0.5, 1), opacity 0.2s ease;
+      }
       .tabbar button {
+        position: relative;
+        z-index: 1;
         display: grid;
         justify-items: center;
         gap: 2px;
@@ -865,7 +955,6 @@ export class SmartNestProPanel extends LitElement {
       }
       .tabbar button.on {
         color: var(--sn-text);
-        background: rgba(255, 255, 255, 0.12);
       }
       .tabbar button.on .icon {
         color: var(--sn-accent);
