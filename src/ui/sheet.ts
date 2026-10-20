@@ -57,14 +57,18 @@ export class SnSheet extends LitElement {
     return html`
       <div class="scrim" @click=${this.close}></div>
       <section
-        class="panel glass ${half ? "half" : ""}"
+        class="panel glass ${half ? "half" : ""} ${spec.wide ? "wide" : ""}"
         role="dialog"
         aria-label=${spec.title}
         style=${this.dragY ? `transform: translateY(${Math.max(this.dragY, -80)}px); transition: none` : ""}
       >
         <header @pointerdown=${this.down} @pointermove=${this.move} @pointerup=${this.up} @pointercancel=${this.up}>
           ${this.phone ? html`<div class="grab"></div>` : nothing}
-          <h2>${spec.title}</h2>
+          ${spec.icon ? html`<span class="hicon">${icon(spec.icon, 22)}</span>` : nothing}
+          <div class="titles">
+            <h2>${spec.title}</h2>
+            ${spec.subtitle ? html`<span class="subtitle">${spec.subtitle}</span>` : nothing}
+          </div>
           <button class="round" aria-label="close" @click=${this.close}>${icon(mdiClose)}</button>
         </header>
         <div class="body">${spec.render(this.ctx)}</div>
@@ -87,7 +91,9 @@ export class SnSheet extends LitElement {
       .scrim {
         position: absolute;
         inset: 0;
-        background: rgba(20, 16, 12, 0.35);
+        background: rgba(20, 16, 12, 0.42);
+        backdrop-filter: blur(6px);
+        -webkit-backdrop-filter: blur(6px);
         pointer-events: auto;
         animation: fade 0.2s ease;
       }
@@ -137,11 +143,38 @@ export class SnSheet extends LitElement {
         border-radius: 3px;
         background: var(--sn-text-faint);
       }
-      h2 {
+      .titles {
         flex: 1;
+        min-width: 0;
+        display: grid;
+        gap: 2px;
+      }
+      h2 {
         margin: 0;
         font-size: 20px;
         font-weight: 400;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .subtitle {
+        font-size: 13px;
+        color: var(--sn-text-dim);
+      }
+      .hicon {
+        display: grid;
+        place-items: center;
+        flex: none;
+        width: 46px;
+        height: 46px;
+        border-radius: 50%;
+        background: rgba(255, 255, 255, 0.1);
+        border: 1px solid var(--sn-glass-border);
+        color: var(--sn-accent);
+      }
+      .panel.wide {
+        width: min(980px, calc(100vw - 48px));
+        max-height: min(90vh, 900px);
       }
       .more-grid {
         display: grid;

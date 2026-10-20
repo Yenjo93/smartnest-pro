@@ -7,6 +7,11 @@ export interface SheetSpec {
   render: (ctx: Ctx) => TemplateResult;
   /** Phone room sheet: starts at half height and can be dragged to full. */
   half?: boolean;
+  /** Camera and map popups: a wider dialog on tablets and desktops. */
+  wide?: boolean;
+  /** Header icon (mdi path) and a line under the title, e.g. the room. */
+  icon?: string;
+  subtitle?: string;
   /** The sheet to return to when this one closes (a hold popup opened from the room sheet). */
   back?: SheetSpec;
 }
@@ -18,6 +23,7 @@ export interface Ctx {
   t: Translate;
   lang: Lang;
   rtl: boolean;
+  dark: boolean;
   phone: boolean;
   isAdmin: boolean;
   editing: boolean;
@@ -31,5 +37,7 @@ export interface Ctx {
   closeSheet(): void;
   /** Hold popup: set a light's brightness or a curtain's position. */
   openLevel(entityId: string): void;
+  /** SmartNest's own popup for any device, person or camera. */
+  openEntity(entityId: string): void;
   toast(message: string): void;
 }

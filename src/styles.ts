@@ -1,5 +1,6 @@
 import { css } from "lit";
 import outfitUrl from "@fontsource-variable/outfit/files/outfit-latin-wght-normal.woff2?url";
+import { hideStyles } from "./pages/hide";
 import alexandriaArUrl from "@fontsource-variable/alexandria/files/alexandria-arabic-wght-normal.woff2?url";
 
 /**
@@ -74,7 +75,7 @@ export const tokens = css`
 `;
 
 /** The frosted card every panel sits on, plus small shared pieces. Included by each component. */
-export const shared = css`
+const sharedBase = css`
   :host {
     font-family: var(--sn-font);
     -webkit-tap-highlight-color: transparent;
@@ -199,3 +200,5 @@ export const shared = css`
     }
   }
 `;
+
+export const shared = [sharedBase, hideStyles];

@@ -6,6 +6,7 @@ export const defaultConfig = (): ProConfig => ({
   hero: { pins: [] },
   home: { devices: [], scenes: [] },
   rooms: {},
+  pages: {},
 });
 
 /** Fills anything a saved layout is missing, so older or hand-edited layouts never crash the panel. */
@@ -27,6 +28,7 @@ export function normalize(raw: unknown): ProConfig {
       scenes: Array.isArray(c.home?.scenes) ? c.home!.scenes : [],
     },
     rooms: c.rooms && typeof c.rooms === "object" ? c.rooms : {},
+    pages: c.pages && typeof c.pages === "object" ? c.pages : {},
   };
 }
 

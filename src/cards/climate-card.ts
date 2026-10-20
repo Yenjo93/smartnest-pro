@@ -27,6 +27,8 @@ export class SnClimateCard extends LitElement {
   @property({ attribute: false }) ctx!: Ctx;
   /** A specific thermostat (Climate page). Without it, the card shows the one picked for the Home page. */
   @property() entity?: string;
+  /** Inside a popup: no outer glass and no header (the popup has its own). */
+  @property({ type: Boolean, reflect: true }) bare = false;
   /** Target while dragging; sent to HA on release so the thermostat isn't flooded. */
   @state() private dragTarget?: number;
 
@@ -97,7 +99,7 @@ export class SnClimateCard extends LitElement {
       <h3>${this.entity ? nameOf(hass, this.entity) : t("climate_comfort")}</h3>
       ${gear}
     </div>`;
-    if (!id || unavailable(s)) return html`<div class="glass card">${head}<div class="empty">${t("not_configured")}</div></div>`;
+    if (!id || unavailable(s)) return html`<div class="card ${this.bare ? "" : "glass"}">${head}<div class="empty">${t("not_configured")}</div></div>`;
 
     const { target: haTarget, current, min, max } = climateTarget(s);
     const target = this.dragTarget ?? haTarget;
@@ -108,8 +110,8 @@ export class SnClimateCard extends LitElement {
     const ticks = Array.from({ length: 31 }, (_, i) => START + (i / 30) * SWEEP);
     const off = s!.state === "off";
 
-    return html`<div class="glass card">
-      ${head}
+    return html`<div class="card ${this.bare ? "" : "glass"}">
+      ${this.bare ? nothing : head}
       <div class="body">
         <div class="dial">
           <svg class="ring" viewBox="0 0 200 200" @pointerdown=${(e: PointerEvent) => this.down(e, id)}>
@@ -159,6 +161,12 @@ export class SnClimateCard extends LitElement {
       .card {
         height: 100%;
         padding: 20px 22px 22px;
+      }
+      :host([bare]) .card {
+        padding: 0;
+      }
+      :host([bare]) .dial {
+        max-width: 280px;
       }
       .body {
         display: flex;

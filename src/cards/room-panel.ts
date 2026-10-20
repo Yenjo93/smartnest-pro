@@ -1,12 +1,11 @@
 import { LitElement, css, html, nothing, svg } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { mdiAccountGroupOutline, mdiCog, mdiDoorOpen, mdiMinus, mdiPlus, mdiThermometer, mdiTune, mdiWaterOutline } from "@mdi/js";
+import { mdiClose, mdiAccountGroupOutline, mdiCog, mdiDoorOpen, mdiMinus, mdiPlus, mdiThermometer, mdiTune, mdiWaterOutline } from "@mdi/js";
 import type { Ctx } from "../ctx";
 import { shared } from "../styles";
 import { entityIcon, icon } from "../ui/icon";
 import { climateTarget, isOn, nameOf, roomInfo, setTemp, toggle, unavailable } from "../ha";
 import { roomSettings } from "../settings";
-import { moreInfo } from "./devices-card";
 import { hasLevel, noMenu, onHold } from "../ui/hold";
 
 const TICKS = 64;
@@ -62,7 +61,7 @@ export class SnRoomPanel extends LitElement {
         <button
           class="round light"
           aria-label=${t("settings")}
-          @click=${() => (editing && this.area ? roomSettings(this.ctx, this.area) : moreInfo(this, id))}
+          @click=${() => (editing && this.area ? roomSettings(this.ctx, this.area) : this.ctx.openEntity(id))}
         >
           ${icon(editing ? mdiCog : mdiTune, 18)}
         </button>
@@ -87,10 +86,11 @@ export class SnRoomPanel extends LitElement {
     const on = isOn(s);
     const pic = s?.attributes.entity_picture as string | undefined;
     const level = hasLevel(id, s);
-    return html`<div class="node ${on ? "on" : ""}">
+    const area = this.area!;
+    const node = html`<div class="node ${on ? "on" : ""}">
       <button
         class="pic"
-        @click=${() => moreInfo(this, id)}
+        @click=${() => this.ctx.openEntity(id)}
         @pointerdown=${(e: PointerEvent) => level && onHold(e, () => this.ctx.openLevel(id))}
         @contextmenu=${noMenu}
       >
@@ -98,6 +98,22 @@ export class SnRoomPanel extends LitElement {
       </button>
       <span class="nname">${nameOf(this.ctx.hass, id)}</span>
       <button class="switch" ?on=${on} ?disabled=${unavailable(s)} aria-pressed=${on} @click=${() => toggle(this.ctx.hass, id)}></button>
+    </div>`;
+    if (!this.ctx.editing) return node;
+    // Hidden per room, so the room settings' "Hidden devices" list brings them back.
+    return html`<div class="hideable">
+      ${node}
+      <button
+        class="hide-x"
+        aria-label=${this.ctx.t("hide")}
+        @click=${() =>
+          this.ctx.update((d) => {
+            const r = (d.rooms[area] ??= {});
+            r.hidden = [...(r.hidden ?? []), id];
+          })}
+      >
+        ${icon(mdiClose, 16)}
+      </button>
     </div>`;
   }
 

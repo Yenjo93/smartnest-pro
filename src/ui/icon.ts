@@ -1,6 +1,11 @@
 import { html, svg } from "lit";
 import {
+  mdiAccount,
   mdiAirConditioner,
+  mdiCctv,
+  mdiShieldHomeOutline,
+  mdiImageOutline,
+  mdiGauge,
   mdiBlindsHorizontal,
   mdiCeilingLight,
   mdiFan,
@@ -29,6 +34,10 @@ export const icon = (path: string, size = 20) =>
 export function entityIcon(id: string, s?: HassEntity): string {
   const d = domainOf(id);
   const dc = s?.attributes.device_class;
+  if (d === "person") return mdiAccount;
+  if (d === "camera") return mdiCctv;
+  if (d === "alarm_control_panel") return mdiShieldHomeOutline;
+  if (d === "image") return mdiImageOutline;
   if (d === "light") return id.includes("ceiling") ? mdiCeilingLight : mdiLightbulbOutline;
   if (d === "media_player") return dc === "tv" || /tv|oled/i.test(id) ? mdiTelevision : mdiSpeaker;
   if (d === "vacuum") return mdiRobotVacuum;
@@ -39,6 +48,7 @@ export function entityIcon(id: string, s?: HassEntity): string {
   if (d === "humidifier") return mdiWaterPercent;
   if (d === "sensor" && dc === "power") return /solar|pv/i.test(id) ? mdiSolarPower : mdiFlash;
   if (d === "sensor" && dc === "temperature") return mdiThermometer;
+  if (d === "sensor") return mdiGauge;
   if (d === "switch") return dc === "outlet" ? mdiPowerPlugOutline : mdiToggleSwitchOutline;
   return mdiHomeOutline;
 }

@@ -7,6 +7,8 @@ import { entityIcon, icon } from "../ui/icon";
 import { areaOf, areas, byDomain, isOn, nameOf, toggle } from "../ha";
 import { hasLevel, noMenu, onHold } from "../ui/hold";
 import { pageHead, pageStyles } from "./page";
+import { hiddenButton, hideable, shown } from "./hide";
+import { nothing } from "lit";
 
 /** All lights grouped by room. Tap toggles, hold opens the brightness popup. */
 @customElement("sn-lights-page")
@@ -35,7 +37,7 @@ export class SnLightsPage extends LitElement {
 
   render() {
     const { hass, t } = this.ctx;
-    const all = byDomain(hass, "light");
+    const all = shown(this.ctx, "lights", byDomain(hass, "light"));
     const on = all.filter((id) => isOn(hass.states[id]));
     const groups = areas(hass)
       .map((a) => ({ name: a.name, ids: all.filter((id) => areaOf(hass, id) === a.area_id) }))
@@ -43,13 +45,13 @@ export class SnLightsPage extends LitElement {
     const loose = all.filter((id) => !areaOf(hass, id));
     if (loose.length) groups.push({ name: t("other"), ids: loose });
     return html`
-      ${pageHead(t("lights"), [t("n_lights_on", { n: on.length })], on.length
+      ${pageHead(t("lights"), [t("n_lights_on", { n: on.length })], html`${on.length
         ? html`<button class="action" @click=${() => hass.callService("light", "turn_off", { entity_id: on })}>
             ${icon(mdiLightbulbGroupOff, 18)}${t("all_off")}
           </button>`
-        : undefined)}
+        : nothing}${hiddenButton(this.ctx, "lights")}`)}
       ${all.length
-        ? groups.map((g) => html`<div class="section">${g.name}</div><div class="grid" style="--min: 150px">${g.ids.map((id) => this.tile(id))}</div>`)
+        ? groups.map((g) => html`<div class="section">${g.name}</div><div class="grid" style="--min: 150px">${g.ids.map((id) => hideable(this.ctx, "lights", id, this.tile(id)))}</div>`)
         : html`<div class="glass"><div class="empty">${t("not_configured")}</div></div>`}
     `;
   }

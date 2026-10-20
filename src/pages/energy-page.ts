@@ -6,6 +6,7 @@ import { shared } from "../styles";
 import { icon } from "../ui/icon";
 import { byDomain, nameOf, powerKw } from "../ha";
 import { pageHead, pageStyles } from "./page";
+import { hiddenButton, hideable, shown } from "./hide";
 import "../cards/energy-card";
 
 type Stat = { start: number | string; change?: number | null };
@@ -71,7 +72,7 @@ export class SnEnergyPage extends LitElement {
     const weekMax = Math.max(0.1, ...week.map((d) => (val(grid, d) ?? 0) + (val(solar, d) ?? 0)));
     const fmt = (v?: number) => (v === undefined ? "–" : v.toFixed(1));
 
-    const consumers = byDomain(hass, "sensor")
+    const consumers = shown(this.ctx, "energy", byDomain(hass, "sensor"))
       .filter((id) => hass.states[id].attributes.device_class === "power" && id !== solar_power)
       .map((id) => ({ id, kw: powerKw(hass.states[id]) ?? 0 }))
       .filter((c) => c.kw > 0.001)
@@ -82,7 +83,7 @@ export class SnEnergyPage extends LitElement {
 
     if (!energy) return html`${pageHead(t("energy"))}<div class="glass"><div class="empty">${t("no_energy")}</div></div>`;
     return html`
-      ${pageHead(t("energy"), [solarNow !== undefined ? html`${icon(mdiSolarPower, 16)}${t("eco_solar", { kw: solarNow.toFixed(1) })}` : undefined])}
+      ${pageHead(t("energy"), [solarNow !== undefined ? html`${icon(mdiSolarPower, 16)}${t("eco_solar", { kw: solarNow.toFixed(1) })}` : undefined], hiddenButton(this.ctx, "energy"))}
       <div class="stats">
         <div class="glass stat"><span>${t("today")}</span><b>${fmt(val(grid, today))}<small>kWh</small></b></div>
         <div class="glass stat"><span>${t("yesterday")}</span><b>${fmt(val(grid, day(1)))}<small>kWh</small></b></div>
@@ -113,12 +114,12 @@ export class SnEnergyPage extends LitElement {
         ? html`<div class="section">${t("top_consumers")}</div>
             <div class="glass card list">
               ${consumers.map(
-                (c) => html`<div class="row">
+                (c) => hideable(this.ctx, "energy", c.id, html`<div class="row" @click=${() => this.ctx.openEntity(c.id)}>
                   <span class="ic">${icon(mdiFlash, 16)}</span>
                   <span class="name">${nameOf(hass, c.id)}</span>
                   <span class="bar"><span style="width:${(c.kw / topMax) * 100}%"></span></span>
                   <span class="kw">${c.kw >= 1 ? `${c.kw.toFixed(2)} kW` : `${Math.round(c.kw * 1000)} W`}</span>
-                </div>`,
+                </div>`),
               )}
             </div>`
         : nothing}
@@ -204,6 +205,7 @@ export class SnEnergyPage extends LitElement {
         gap: 12px;
       }
       .row {
+        cursor: pointer;
         display: grid;
         grid-template-columns: auto minmax(90px, 1fr) 2fr auto;
         align-items: center;

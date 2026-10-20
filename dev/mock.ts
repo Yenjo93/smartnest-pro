@@ -45,8 +45,9 @@ add("vacuum.cleanbot", "docked", {
 add("image.cleanbot_map", "2026-10-20T08:00:00Z", { friendly_name: "CleanBot Map", entity_picture: "/dev/robot-map.svg" });
 entities["vacuum.cleanbot"].device_id = "dev_robot";
 entities["image.cleanbot_map"].device_id = "dev_robot";
-add("person.omar", "home", { friendly_name: "Omar", source: "device_tracker.omar_phone" });
-add("person.lina", "Work", { friendly_name: "Lina", source: "device_tracker.lina_phone" });
+add("zone.home", "2", { friendly_name: "Home", latitude: 32.0853, longitude: 34.7818, radius: 100 });
+add("person.omar", "home", { friendly_name: "Omar", source: "device_tracker.omar_phone", latitude: 32.0853, longitude: 34.7818 });
+add("person.lina", "Work", { friendly_name: "Lina", source: "device_tracker.lina_phone", latitude: 32.0741, longitude: 34.7922 });
 add("person.adam", "home", { friendly_name: "Adam", source: "device_tracker.adam_phone" });
 add("person.maya", "not_home", { friendly_name: "Maya", source: "device_tracker.maya_phone" });
 add("device_tracker.omar_phone", "home", { friendly_name: "Omar's phone", battery_level: 81 });
@@ -122,6 +123,7 @@ const demoConfig: ProConfig = {
   rooms: {
     main_hall: { size_m2: 48, occupancy: "sensor.main_hall_people" },
   },
+  pages: {},
 };
 
 const params = new URLSearchParams(location.search);
@@ -169,6 +171,35 @@ function callService(domain: string, service: string, data: Record<string, any> 
   return Promise.resolve();
 }
 
+/** 24 hours of fake history: a drive to work for people, a wavy line for numbers, on/off blocks for binary sensors. */
+function historyFor(id: string) {
+  const now = Date.now() / 1000;
+  const start = now - 86_400;
+  const s = states[id];
+  const rows: any[] = [];
+  if (id.startsWith("person.")) {
+    const home = [32.0853, 34.7818];
+    const dest = [s?.attributes.latitude ?? 32.0741, s?.attributes.longitude ?? 34.7922];
+    rows.push({ s: "home", a: { latitude: home[0], longitude: home[1] }, lu: start });
+    if (s?.state !== "home") {
+      for (let i = 0; i <= 12; i++) {
+        const f = i / 12;
+        const wob = Math.sin(f * Math.PI * 3) * 0.002;
+        rows.push({ s: i < 12 ? "not_home" : s.state, a: { latitude: home[0] + (dest[0] - home[0]) * f + wob, longitude: home[1] + (dest[1] - home[1]) * f - wob }, lu: now - 3 * 3600 + i * 300 });
+      }
+    } else {
+      rows.push({ s: "not_home", a: { latitude: 32.08, longitude: 34.79 }, lu: now - 6 * 3600 });
+      rows.push({ s: "home", a: { latitude: home[0], longitude: home[1] }, lu: now - 2 * 3600 });
+    }
+  } else if (id.startsWith("binary_sensor.")) {
+    for (let t = start, on = false; t < now; t += 3600 * (1 + ((t / 3600) % 3)), on = !on) rows.push({ s: on ? "on" : "off", lu: t });
+  } else {
+    const base = parseFloat(s?.state ?? "0") || 20;
+    for (let t = start; t <= now; t += 900) rows.push({ s: String(+(base + Math.sin(t / 7000) * base * 0.08).toFixed(2)), lu: t });
+  }
+  return { [id]: rows };
+}
+
 /** Daily totals for the last 40 days, for the Energy page. */
 function dailyStatistics(ids: string[]) {
   const out: Record<string, any[]> = {};
@@ -210,6 +241,8 @@ async function callWS(msg: Record<string, any>): Promise<any> {
       saved = msg.config;
       configSubs.forEach((cb) => cb({ config: saved }));
       return null;
+    case "history/history_during_period":
+      return historyFor(msg.entity_ids[0]);
     case "recorder/statistics_during_period":
       return msg.period === "day" ? dailyStatistics(msg.statistic_ids) : statistics();
     default:
