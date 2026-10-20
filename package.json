@@ -1,0 +1,22 @@
+{
+  "name": "smartnest-pro",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --open /dev/index.html",
+    "build": "tsc --noEmit && rm -rf custom_components/smartnest_pro/frontend/chunks custom_components/smartnest_pro/frontend/assets && vite build && node scripts/sync-version.mjs",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@fontsource-variable/alexandria": "^5.3.0",
+    "@fontsource-variable/outfit": "^5.3.0",
+    "@mdi/js": "^7.4.47",
+    "lit": "^3.3.3"
+  },
+  "devDependencies": {
+    "terser": "^5.51.2",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21"
+  }
+}
