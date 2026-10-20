@@ -6,6 +6,8 @@ import { shared } from "../styles";
 import { icon } from "../ui/icon";
 import { areas, roomInfo } from "../ha";
 import "../cards/room-panel";
+import { pageHead, pageStyles } from "./page";
+import { hiddenButton, hideable, shown } from "./hide";
 
 /** Every area as a card; the chosen one opens beside the grid (or in a sheet on phones). */
 @customElement("sn-rooms-page")
@@ -14,13 +16,15 @@ export class SnRoomsPage extends LitElement {
 
   render() {
     const { hass, config, t, room, phone } = this.ctx;
-    const list = areas(hass);
-    if (!list.length) return html`<div class="glass"><div class="empty">${t("no_rooms")}</div></div>`;
-    return html`<div class="layout ${phone ? "phone" : ""}">
+    const visible = shown(this.ctx, "rooms", areas(hass).map((a) => a.area_id));
+    const list = areas(hass).filter((a) => visible.includes(a.area_id));
+    const head = pageHead(t("rooms"), [], hiddenButton(this.ctx, "rooms", (id) => hass.areas?.[id]?.name ?? id));
+    if (!list.length) return html`${head}<div class="glass"><div class="empty">${t("no_rooms")}</div></div>`;
+    return html`${head}<div class="layout ${phone ? "phone" : ""}">
       <div class="grid">
         ${list.map((a) => {
           const r = roomInfo(hass, a.area_id, config.rooms[a.area_id]);
-          return html`<button class="glass room ${a.area_id === room && !phone ? "sel" : ""}" @click=${() => this.ctx.selectRoom(a.area_id)}>
+          return hideable(this.ctx, "rooms", a.area_id, html`<button class="glass room ${a.area_id === room && !phone ? "sel" : ""}" @click=${() => this.ctx.selectRoom(a.area_id)}>
             <span class="name">${r.name}</span>
             <span class="stats">
               ${r.temperature !== undefined ? html`<span>${icon(mdiThermometer, 14)}${r.temperature.toFixed(1)}°</span>` : nothing}
@@ -33,7 +37,7 @@ export class SnRoomsPage extends LitElement {
               <span>${t("devices_count", { n: r.nodes.length })}</span>
               ${r.activeNodes ? html`<span class="on">${t("devices_on", { n: r.activeNodes })}</span>` : nothing}
             </span>
-          </button>`;
+          </button>`);
         })}
       </div>
       ${phone ? nothing : html`<sn-room-panel .ctx=${this.ctx} .area=${room}></sn-room-panel>`}
@@ -42,12 +46,15 @@ export class SnRoomsPage extends LitElement {
 
   static styles = [
     shared,
+    pageStyles,
     css`
       :host {
-        display: block;
+        display: flex;
+        flex-direction: column;
         height: 100%;
       }
       .layout {
+        flex: 1;
         display: grid;
         grid-template-columns: 1fr minmax(340px, 400px);
         gap: 20px;

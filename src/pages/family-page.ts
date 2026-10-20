@@ -5,8 +5,8 @@ import type { Ctx } from "../ctx";
 import { shared } from "../styles";
 import { icon } from "../ui/icon";
 import { byDomain, nameOf, num, siblings, since } from "../ha";
-import { moreInfo } from "../cards/devices-card";
 import { pageHead, pageStyles } from "./page";
+import { hiddenButton, hideable, shown } from "./hide";
 
 /** Everyone in HA's People list: home or where they are, since when, and their phone's battery. */
 @customElement("sn-family-page")
@@ -36,7 +36,7 @@ export class SnFamilyPage extends LitElement {
     const pic = s.attributes.entity_picture as string | undefined;
     const name = nameOf(hass, id);
     const batt = this.battery(id);
-    return html`<button class="glass person ${home ? "home" : ""}" @click=${() => moreInfo(this, id)}>
+    return html`<button class="glass person ${home ? "home" : ""}" @click=${() => this.ctx.openEntity(id)}>
       <span class="avatar">
         ${pic ? html`<img src=${pic} alt="" />` : html`<span class="initials">${name.slice(0, 1).toUpperCase()}</span>`}
         <span class="dot"></span>
@@ -52,12 +52,12 @@ export class SnFamilyPage extends LitElement {
 
   render() {
     const { hass, t } = this.ctx;
-    const people = byDomain(hass, "person");
+    const people = shown(this.ctx, "family", byDomain(hass, "person"));
     const home = people.filter((id) => hass.states[id].state === "home").length;
     return html`
-      ${pageHead(t("family"), [t("at_home", { n: home })])}
+      ${pageHead(t("family"), [t("at_home", { n: home })], hiddenButton(this.ctx, "family"))}
       ${people.length
-        ? html`<div class="grid" style="--min: 150px">${people.map((id) => this.person(id))}</div>`
+        ? html`<div class="grid" style="--min: 150px">${people.map((id) => hideable(this.ctx, "family", id, this.person(id)))}</div>`
         : html`<div class="glass"><div class="empty">${t("not_configured")}</div></div>`}
     `;
   }

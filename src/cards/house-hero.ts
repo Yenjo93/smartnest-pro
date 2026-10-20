@@ -8,7 +8,6 @@ import { entityIcon, icon } from "../ui/icon";
 import { domainOf, isOn, nameOf, powerKw, roomInfo, toggle, unavailable } from "../ha";
 import { newId } from "../config";
 import { pinLabel, pinSettings } from "../settings";
-import { moreInfo } from "./devices-card";
 import { hasLevel, noMenu, onHold } from "../ui/hold";
 
 /**
@@ -89,7 +88,7 @@ export class SnHouseHero extends LitElement {
     else if (pin.entity) {
       const d = domainOf(pin.entity);
       if (["light", "switch", "fan", "cover", "lock"].includes(d)) toggle(this.ctx.hass, pin.entity);
-      else moreInfo(this, pin.entity);
+      else this.ctx.openEntity(pin.entity);
     }
   }
 

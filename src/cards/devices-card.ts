@@ -56,7 +56,7 @@ export class SnDevicesCard extends LitElement {
   private head(id: string, s: HassEntity) {
     return html`<div class="tile-head">
       <button class="name" @click=${() => toggle(this.ctx.hass, id)}>${nameOf(this.ctx.hass, id)}</button>
-      <button class="round gear" aria-label=${this.ctx.t("settings")} @click=${() => moreInfo(this, id)}>${icon(mdiTune, 18)}</button>
+      <button class="round gear" aria-label=${this.ctx.t("settings")} @click=${() => this.ctx.openEntity(id)}>${icon(mdiTune, 18)}</button>
     </div>`;
   }
 

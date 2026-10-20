@@ -18,8 +18,8 @@ import { shared } from "../styles";
 import { icon } from "../ui/icon";
 import { areaName, byDomain, nameOf, since } from "../ha";
 import { onHold, noMenu } from "../ui/hold";
-import { moreInfo } from "../cards/devices-card";
 import { pageHead, pageStyles } from "./page";
+import { hiddenButton, hideable, shown } from "./hide";
 
 const OPENINGS = ["door", "window", "garage_door", "opening"];
 
@@ -62,7 +62,7 @@ export class SnSecurityPage extends LitElement {
     const open = s.state === "on";
     const dc = s.attributes.device_class;
     const ic = dc === "window" ? (open ? mdiWindowOpenVariant : mdiWindowClosedVariant) : dc === "garage_door" ? (open ? mdiGarageOpen : mdiGarage) : open ? mdiDoorOpen : mdiDoorClosed;
-    return html`<button class="glass tile ${open ? "warn" : "ok"}" @click=${() => moreInfo(this, id)}>
+    return html`<button class="glass tile ${open ? "warn" : "ok"}" @click=${() => this.ctx.openEntity(id)}>
       <span class="ic">${icon(ic, 24)}</span>
       <span class="name">${nameOf(hass, id)}</span>
       <span class="st">${open ? t("st_open") : t("st_closed")} · ${since(s.last_changed, lang)}</span>
@@ -76,7 +76,7 @@ export class SnSecurityPage extends LitElement {
     const needsCode = !!s.attributes.code_format && s.attributes.code_arm_required !== false;
     // With a code, HA's own keypad dialog handles it.
     const run = (service: string) => () =>
-      needsCode || (service === "alarm_disarm" && s.attributes.code_format) ? moreInfo(this, id) : hass.callService("alarm_control_panel", service, { entity_id: id });
+      needsCode || (service === "alarm_disarm" && s.attributes.code_format) ? this.ctx.openEntity(id) : hass.callService("alarm_control_panel", service, { entity_id: id });
     return html`<div class="glass alarm ${armed ? "armed" : ""} ${s.state === "triggered" ? "triggered" : ""}">
       <span class="shield">${icon(armed ? mdiShieldLock : mdiShieldOff, 34)}</span>
       <div class="ainfo">
@@ -95,7 +95,7 @@ export class SnSecurityPage extends LitElement {
     const { hass } = this.ctx;
     const pic = hass.states[id].attributes.entity_picture as string | undefined;
     const area = areaName(hass, id);
-    return html`<button class="glass cam" @click=${() => moreInfo(this, id)}>
+    return html`<button class="glass cam" @click=${() => this.ctx.openEntity(id)}>
       ${pic ? html`<img src="${pic}${pic.includes("?") ? "&" : "?"}t=${this.tick}" alt="" loading="lazy" />` : nothing}
       <span class="cam-label">${nameOf(hass, id)}${area ? html`<small>${area}</small>` : nothing}</span>
     </button>`;
@@ -103,10 +103,11 @@ export class SnSecurityPage extends LitElement {
 
   render() {
     const { hass, t } = this.ctx;
-    const alarms = byDomain(hass, "alarm_control_panel");
-    const locks = byDomain(hass, "lock");
-    const openings = byDomain(hass, "binary_sensor").filter((id) => OPENINGS.includes(hass.states[id].attributes.device_class));
-    const cams = byDomain(hass, "camera");
+    const sh = (ids: string[]) => shown(this.ctx, "security", ids);
+    const alarms = sh(byDomain(hass, "alarm_control_panel"));
+    const locks = sh(byDomain(hass, "lock"));
+    const openings = sh(byDomain(hass, "binary_sensor").filter((id) => OPENINGS.includes(hass.states[id].attributes.device_class)));
+    const cams = sh(byDomain(hass, "camera"));
     const unlocked = locks.filter((id) => hass.states[id].state !== "locked");
     const open = openings.filter((id) => hass.states[id].state === "on");
     const any = alarms.length + locks.length + openings.length + cams.length;
@@ -117,18 +118,18 @@ export class SnSecurityPage extends LitElement {
           locks.length ? (unlocked.length ? t("n_unlocked", { n: unlocked.length }) : t("all_locked")) : undefined,
           openings.length ? (open.length ? t("n_open", { n: open.length }) : t("all_closed")) : undefined,
         ],
-        unlocked.length
+        html`${unlocked.length
           ? html`<button class="action" @click=${() => hass.callService("lock", "lock", { entity_id: unlocked })}>${icon(mdiLock, 18)}${t("lock_all")}</button>`
-          : undefined,
+          : nothing}${hiddenButton(this.ctx, "security")}`,
       )}
       ${!any ? html`<div class="glass"><div class="empty">${t("not_configured")}</div></div>` : nothing}
-      ${alarms.map((id) => this.alarm(id))}
-      ${locks.length ? html`<div class="section">${t("locks")}</div><div class="grid" style="--min: 180px">${locks.map((id) => this.lock(id))}</div>` : nothing}
+      ${alarms.map((id) => hideable(this.ctx, "security", id, this.alarm(id)))}
+      ${locks.length ? html`<div class="section">${t("locks")}</div><div class="grid" style="--min: 180px">${locks.map((id) => hideable(this.ctx, "security", id, this.lock(id)))}</div>` : nothing}
       ${openings.length
         ? html`<div class="section">${t("doors_windows")}</div>
-            <div class="grid" style="--min: 180px">${[...open, ...openings.filter((id) => !open.includes(id))].map((id) => this.opening(id))}</div>`
+            <div class="grid" style="--min: 180px">${[...open, ...openings.filter((id) => !open.includes(id))].map((id) => hideable(this.ctx, "security", id, this.opening(id)))}</div>`
         : nothing}
-      ${cams.length ? html`<div class="section">${t("cameras")}</div><div class="grid" style="--min: 280px">${cams.map((id) => this.camera(id))}</div>` : nothing}
+      ${cams.length ? html`<div class="section">${t("cameras")}</div><div class="grid" style="--min: 280px">${cams.map((id) => hideable(this.ctx, "security", id, this.camera(id)))}</div>` : nothing}
     `;
   }
 

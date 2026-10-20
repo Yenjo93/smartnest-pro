@@ -28,7 +28,7 @@ import { areas, nameOf, powerKw, roomInfo } from "./ha";
 import { installFonts, shared, tokens } from "./styles";
 import { generalSettings } from "./settings";
 import { icon } from "./ui/icon";
-import { moreInfo } from "./cards/devices-card";
+import { entitySheet } from "./popups/entity-popup";
 import "./ui/sheet";
 import "./ui/level";
 import "./cards/house-hero";
@@ -131,6 +131,7 @@ export class SmartNestProPanel extends LitElement {
       t: translator(lang),
       lang,
       rtl: lang === "ar",
+      dark: config.settings.theme === "dark" || (config.settings.theme === "auto" && !!this.hass!.themes?.darkMode),
       phone: this.phone,
       isAdmin: !!this.hass!.user?.is_admin,
       editing: !!this.draft,
@@ -147,6 +148,7 @@ export class SmartNestProPanel extends LitElement {
       },
       showSheet: (spec) => (this.sheet = spec),
       closeSheet: () => (this.sheet = undefined),
+      openEntity: (id) => (this.sheet = { ...entitySheet(ctx, id), back: this.sheet }),
       openLevel: (id) =>
         (this.sheet = {
           title: nameOf(this.hass!, id),
@@ -221,7 +223,7 @@ export class SmartNestProPanel extends LitElement {
           ...Object.keys(c.hass.states)
             .filter((id) => nameOf(c.hass, id).toLowerCase().includes(q))
             .slice(0, 8)
-            .map((id) => ({ key: id, label: nameOf(c.hass, id), icon: mdiMagnify, go: () => moreInfo(this, id) })),
+            .map((id) => ({ key: id, label: nameOf(c.hass, id), icon: mdiMagnify, go: () => c.openEntity(id) })),
         ].slice(0, 10)
       : [];
     return html`<div class="search">
@@ -353,7 +355,8 @@ export class SmartNestProPanel extends LitElement {
   }
 
   private homePhone(c: Ctx) {
-    const list = areas(c.hass);
+    const hiddenRooms = c.config.pages.rooms?.hidden ?? [];
+    const list = areas(c.hass).filter((a) => !hiddenRooms.includes(a.area_id));
     return html`<div class="home-phone">
       <sn-house-hero class="hero" .ctx=${c}></sn-house-hero>
       ${list.length

@@ -97,4 +97,6 @@ export interface ProConfig {
     scenes: string[];
   };
   rooms: Record<string, RoomOverride>;
+  /** Per page: items taken off it in edit mode (entity ids, or area ids on the Rooms page). */
+  pages: Record<string, { hidden?: string[] }>;
 }

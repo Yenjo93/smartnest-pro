@@ -1,11 +1,11 @@
 // Pieces every page shares: the header with title and summary chips, and the grid the cards sit in.
 import { css, html, nothing, type TemplateResult } from "lit";
 
-export const pageHead = (title: string, chips: (TemplateResult | string | false | undefined)[] = [], actions?: TemplateResult) =>
+export const pageHead = (title: string, chips: (TemplateResult | string | false | undefined)[] = [], actions?: unknown) =>
   html`<header class="page-head">
     <h1>${title}</h1>
     <div class="page-chips">${chips.filter(Boolean).map((c) => html`<span class="page-chip">${c}</span>`)}</div>
-    ${actions ?? nothing}
+    <div class="page-actions">${actions ?? nothing}</div>
   </header>`;
 
 export const pageStyles = css`
@@ -25,6 +25,11 @@ export const pageStyles = css`
     font-size: 34px;
     font-weight: 400;
     letter-spacing: -0.02em;
+  }
+  .page-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
   }
   .page-chips {
     flex: 1;
