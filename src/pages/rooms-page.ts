@@ -77,8 +77,7 @@ export class SnRoomsPage extends LitElement {
         gap: 12px;
       }
       sn-room-panel {
-        overflow: auto;
-        border-radius: var(--sn-radius);
+        min-height: 0;
       }
       .room {
         display: flex;

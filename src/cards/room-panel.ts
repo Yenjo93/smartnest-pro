@@ -144,12 +144,14 @@ export class SnRoomPanel extends LitElement {
           ? html`<span class="chip"><span class="ic">${icon(mdiWaterOutline, 14)}</span>${t("humidity", { h: Math.round(info.humidity) })}</span>`
           : nothing}
       </div>
-      ${info.climate ? this.zonal(info.climate) : html`<div class="zone"><div class="empty">${t("no_climate")}</div></div>`}
-      <div class="nodes">
-        <div class="nodes-head">${t("nodes_in_room")}</div>
-        ${info.nodes.length
-          ? html`<div class="grid">${info.nodes.map((id) => this.node(id))}</div>`
-          : html`<div class="empty">${t("no_nodes")}</div>`}
+      <div class="scroll">
+        ${info.climate ? this.zonal(info.climate) : html`<div class="zone"><div class="empty">${t("no_climate")}</div></div>`}
+        <div class="nodes">
+          <div class="nodes-head">${t("nodes_in_room")}</div>
+          ${info.nodes.length
+            ? html`<div class="grid">${info.nodes.map((id) => this.node(id))}</div>`
+            : html`<div class="empty">${t("no_nodes")}</div>`}
+        </div>
       </div>
     </div>`;
   }
@@ -160,14 +162,48 @@ export class SnRoomPanel extends LitElement {
       :host {
         display: block;
         min-width: 0;
+        min-height: 0;
       }
+      /*
+       * The glass card is the fixed frame; only .scroll moves inside it. Scrolling the glass card itself cut its
+       * rounded top off and showed a scrollbar, which looked like a loose layer over the AC and devices.
+       */
       .wrap {
         height: 100%;
+        max-height: 100%;
         padding: 18px;
         display: flex;
         flex-direction: column;
         gap: 14px;
         background: var(--sn-glass-light);
+        overflow: hidden;
+      }
+      .scroll {
+        flex: 1;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        margin: 0 -18px -18px;
+        padding: 0 18px 18px;
+        overflow-y: auto;
+        overscroll-behavior: contain;
+        scrollbar-width: none;
+        -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 28px), transparent 100%);
+        mask-image: linear-gradient(to bottom, transparent 0, #000 10px, #000 calc(100% - 28px), transparent 100%);
+      }
+      .scroll::-webkit-scrollbar {
+        display: none;
+      }
+      :host([bare]) .scroll {
+        margin: 0;
+        padding: 0;
+        overflow: visible;
+        -webkit-mask-image: none;
+        mask-image: none;
+      }
+      :host([bare]) .wrap {
+        overflow: visible;
       }
       :host([bare]) .wrap {
         padding: 0;
