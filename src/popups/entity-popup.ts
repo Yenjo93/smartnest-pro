@@ -10,6 +10,7 @@ import "./views";
 import "./camera-view";
 import "./person-view";
 import "./rename";
+import { lightCaps } from "../ui/light-color";
 import "../ui/level";
 import "../cards/climate-card";
 import "../cards/media-player";
@@ -57,6 +58,7 @@ export function entitySheet(ctx: Ctx, id: string): SheetSpec {
     subtitle: areaName(ctx.hass, id),
     icon: entityIcon(id, ctx.hass.states[id]),
     wide: d === "camera" || d === "person",
+    medium: d === "light" && (lightCaps(ctx.hass.states[id]?.attributes).color || lightCaps(ctx.hass.states[id]?.attributes).temp),
     render: (c) => html`
       ${c.isAdmin ? html`<sn-rename .ctx=${c} .entity=${id}></sn-rename>` : nothing}
       ${body(c, id)}

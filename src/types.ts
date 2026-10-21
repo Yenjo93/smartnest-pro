@@ -102,6 +102,8 @@ export interface ProConfig {
   plan: Plan;
   /** Names shown on the dashboard instead of Home Assistant's, by entity id. */
   names?: Record<string, string>;
+  /** Per robot vacuum: which floor plan it cleans and each plan room's segment number in the robot's own map. */
+  robots?: Record<string, { floor?: string; segments: Record<string, number> }>;
   /** Per page: items taken off it in edit mode (entity ids, or area ids on the Rooms page). */
   pages: Record<string, { hidden?: string[] }>;
 }

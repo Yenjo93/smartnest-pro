@@ -31,6 +31,7 @@ export function normalize(raw: unknown): ProConfig {
     rooms: c.rooms && typeof c.rooms === "object" ? c.rooms : {},
     pages: c.pages && typeof c.pages === "object" ? c.pages : {},
     names: c.names && typeof c.names === "object" ? c.names : {},
+    robots: c.robots && typeof c.robots === "object" ? c.robots : {},
     plan: {
       floors: Array.isArray(c.plan?.floors)
         ? c.plan!.floors.map((f) => ({

@@ -57,7 +57,7 @@ export class SnSheet extends LitElement {
     return html`
       <div class="scrim" @click=${this.close}></div>
       <section
-        class="panel glass ${half ? "half" : ""} ${spec.wide ? "wide" : ""}"
+        class="panel glass ${half ? "half" : ""} ${spec.wide ? "wide" : ""} ${spec.medium ? "medium" : ""}"
         role="dialog"
         aria-label=${spec.title}
         style=${this.dragY ? `transform: translateY(${Math.max(this.dragY, -80)}px); transition: none` : ""}
@@ -171,6 +171,9 @@ export class SnSheet extends LitElement {
         background: rgba(255, 255, 255, 0.1);
         border: 1px solid var(--sn-glass-border);
         color: var(--sn-accent);
+      }
+      .panel.medium {
+        width: min(760px, calc(100vw - 48px));
       }
       .panel.wide {
         width: min(980px, calc(100vw - 48px));

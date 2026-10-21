@@ -6,6 +6,7 @@ import { shared } from "../styles";
 import { icon } from "../ui/icon";
 import { domainOf, nameOf, num, siblings } from "../ha";
 import type { Key } from "../i18n";
+import "./robot-rooms";
 
 /** One robot vacuum or mower: status, battery, suction, the map when the integration provides one, and controls. */
 @customElement("sn-robot-card")
@@ -47,15 +48,7 @@ export class SnRobotCard extends LitElement {
       ${mapUrl
         ? html`<button class="map" @click=${() => this.ctx.openEntity(map!)}><img src=${mapUrl} alt=${t("map")} loading="lazy" /></button>`
         : nothing}
-      ${speeds.length && !mower
-        ? html`<div class="speeds" role="group" aria-label=${t("fan_speed")}>
-            <span>${t("fan_speed")}</span>
-            ${speeds.map(
-              (sp) => html`<button class=${sp === s.attributes.fan_speed ? "on" : ""} @click=${() =>
-                hass.callService("vacuum", "set_fan_speed", { entity_id: id, fan_speed: sp })}>${sp}</button>`,
-            )}
-          </div>`
-        : nothing}
+      ${!mower ? html`<sn-robot-rooms .ctx=${this.ctx} .entity=${id}></sn-robot-rooms>` : nothing}
       <div class="controls">
         ${busy
           ? html`<button class="ctl primary" @click=${call("pause")}>${icon(mdiPause)}${t("pause")}</button>`
