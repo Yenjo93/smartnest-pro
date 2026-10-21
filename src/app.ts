@@ -25,7 +25,7 @@ import type { Ctx, SheetSpec } from "./ctx";
 import type { Hass, Palette, PanelInfo, ProConfig } from "./types";
 import { clone, normalize } from "./config";
 import { resolveLang, translator } from "./i18n";
-import { areas, nameOf, powerKw, roomInfo } from "./ha";
+import { areas, nameOf, powerKw, roomInfo, setNameOverrides } from "./ha";
 import { installFonts, shared, tokens } from "./styles";
 import { generalSettings } from "./settings";
 import { icon } from "./ui/icon";
@@ -129,6 +129,7 @@ export class SmartNestProPanel extends LitElement {
 
   private ctx(): Ctx {
     const config = this.live!;
+    setNameOverrides(config.names);
     const lang = resolveLang(config.settings.language, this.hass!.language ?? "en");
     const room = this.room && this.hass!.areas?.[this.room] ? this.room : this.defaultRoom(config);
     const theme = config.settings.theme;
@@ -166,6 +167,7 @@ export class SmartNestProPanel extends LitElement {
           back: this.sheet,
         }),
       toast: (m) => this.toast(m),
+      rename: (id, name) => this.rename(id, name),
     };
     return ctx;
   }
@@ -176,6 +178,32 @@ export class SmartNestProPanel extends LitElement {
       half: true,
       render: (c) => html`<sn-room-panel bare .ctx=${c} .area=${id}></sn-room-panel>`,
     };
+  }
+
+  /** Dashboard names: part of the draft in edit mode, saved straight away otherwise (admins only, like all saving). */
+  private async rename(id: string, name: string | undefined) {
+    const apply = (cfg: ProConfig) => {
+      const names = { ...(cfg.names ?? {}) };
+      if (name && name.trim()) names[id] = name.trim();
+      else delete names[id];
+      cfg.names = names;
+    };
+    if (this.draft) {
+      const next = clone(this.draft);
+      apply(next);
+      this.draft = next;
+      return;
+    }
+    const next = clone(this.config!);
+    apply(next);
+    const t = translator(resolveLang(next.settings.language, this.hass!.language ?? "en"));
+    try {
+      await this.hass!.callWS({ type: "smartnest_pro/config/save", config: next });
+      this.config = next;
+      this.toast(t("saved"));
+    } catch {
+      this.toast(t("save_failed"));
+    }
   }
 
   private toast(message: string) {
@@ -653,9 +681,10 @@ export class SmartNestProPanel extends LitElement {
         align-self: start;
         max-height: 100%;
         display: flex;
-        width: 64px;
+        /* 48px buttons + 8px padding each side + the 1px glass border each side. */
+        width: 66px;
         padding: 8px;
-        border-radius: 32px;
+        border-radius: 33px;
         background: rgba(255, 255, 255, 0.14);
         border-color: rgba(255, 255, 255, 0.25);
         overflow: hidden;
@@ -799,7 +828,8 @@ export class SmartNestProPanel extends LitElement {
       .room-float {
         position: absolute;
         top: 92px;
-        bottom: 16px;
+        /* Leaves the plan's zoom and rotate buttons uncovered below it. */
+        bottom: 66px;
         inset-inline-end: 16px;
         z-index: 7;
         width: min(380px, 42%);

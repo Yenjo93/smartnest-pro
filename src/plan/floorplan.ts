@@ -14,6 +14,9 @@ import {
   mdiTune,
   mdiFitToScreenOutline,
   mdiArrowExpand,
+  mdiCrosshairsGps,
+  mdiRotateLeft,
+  mdiRotateRight,
 } from "@mdi/js";
 import type { Ctx } from "../ctx";
 import type { PlanFloor } from "../types";
@@ -33,6 +36,22 @@ const COLORS: [number, number, number][] = [
   [255, 138, 61],
 ];
 const TIMER_MINUTES = [15, 30, 60, 120];
+
+/** Per-screen preferences (view angle, tap-to-zoom); storage can be missing in private mode, so never throw. */
+const readPref = (k: string): string | null => {
+  try {
+    return localStorage.getItem(k);
+  } catch {
+    return null;
+  }
+};
+const writePref = (k: string, v: string) => {
+  try {
+    localStorage.setItem(k, v);
+  } catch {
+    /* not available: the choice just isn't remembered */
+  }
+};
 const colorModeCount = (ring: string | undefined, id: string, normal: number) => (ring === `${id}|color` ? COLORS.length : normal);
 
 /** The Home hero: the house as a live 3D plan. */
@@ -54,7 +73,9 @@ export class SnFloorplan extends LitElement {
   private palette = "";
   private resize = new ResizeObserver(([e]) => this.scene?.resize(e.contentRect.width, e.contentRect.height));
   private pointers = new Map<number, { x: number; y: number }>();
-  private gesture?: { moved: boolean; pinch?: number; hold?: number; held?: boolean };
+  private gesture?: { moved: boolean; pinch?: number; twist?: number; rotate?: boolean; hold?: number; held?: boolean };
+  /** When on, tapping a device glides to it and opens its controls instead of switching it. Per screen. */
+  @state() private tapZoom = readPref("sn-plan-tapzoom") === "1";
   private lastHass?: unknown;
   /** The room the camera is zoomed into, if any. */
   private focusRoom?: string;
@@ -86,6 +107,8 @@ export class SnFloorplan extends LitElement {
         const scene = new PlanScene(host, this.ctx.palette, !this.ctx.config.settings.reduce_effects);
         scene.onRender = () => this.requestUpdate();
         this.scene = scene;
+        const saved = Number(readPref("sn-plan-azimuth"));
+        if (Number.isFinite(saved) && readPref("sn-plan-azimuth") !== null) scene.setAzimuth(saved);
         this.palette = this.ctx.palette;
         this.resize.observe(host);
         const r = host.getBoundingClientRect();
@@ -143,7 +166,8 @@ export class SnFloorplan extends LitElement {
     (e.currentTarget as Element).setPointerCapture(e.pointerId);
     this.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (this.pointers.size === 1) {
-      this.gesture = { moved: false };
+      // Right mouse button or Shift + drag turns the view; on touch it's a two-finger twist.
+      this.gesture = { moved: false, rotate: e.button === 2 || e.shiftKey };
       // Holding a linked piece of furniture opens its ring, like holding a device icon.
       const hit = !this.ctx.editing && this.scene ? this.pick(e) : undefined;
       if (hit?.entity) {
@@ -159,7 +183,7 @@ export class SnFloorplan extends LitElement {
     }
     if (this.pointers.size === 2) {
       const [a, b] = [...this.pointers.values()];
-      this.gesture = { moved: true, pinch: Math.hypot(a.x - b.x, a.y - b.y) };
+      this.gesture = { moved: true, pinch: Math.hypot(a.x - b.x, a.y - b.y), twist: Math.atan2(b.y - a.y, b.x - a.x) };
     }
   };
 
@@ -173,6 +197,12 @@ export class SnFloorplan extends LitElement {
       const d = Math.hypot(a.x - b.x, a.y - b.y);
       this.scene.zoomBy(d / this.gesture.pinch);
       this.gesture.pinch = d;
+      const ang = Math.atan2(b.y - a.y, b.x - a.x);
+      let delta = ang - (this.gesture.twist ?? ang);
+      if (delta > Math.PI) delta -= 2 * Math.PI;
+      if (delta < -Math.PI) delta += 2 * Math.PI;
+      this.gesture.twist = ang;
+      if (Math.abs(delta) > 0.002) this.scene.rotateBy((-delta * 180) / Math.PI, false);
       return;
     }
     const dx = cur.x - prev.x;
@@ -182,7 +212,8 @@ export class SnFloorplan extends LitElement {
       this.gesture.moved = true;
       clearTimeout(this.gesture.hold);
     }
-    this.scene.pan(dx, dy);
+    if (this.gesture?.rotate) this.scene.rotateBy(dx * 0.4, false);
+    else this.scene.pan(dx, dy);
   };
 
   private pick(e: PointerEvent) {
@@ -193,6 +224,7 @@ export class SnFloorplan extends LitElement {
   private up = (e: PointerEvent) => {
     const g = this.gesture;
     if (g) clearTimeout(g.hold);
+    if (g?.rotate || g?.twist !== undefined) this.saveAngle();
     const wasTap = this.pointers.size === 1 && g && !g.moved && !g.held;
     this.pointers.delete(e.pointerId);
     if (!wasTap || !this.scene || !this.floor) return;
@@ -203,7 +235,8 @@ export class SnFloorplan extends LitElement {
     // A linked piece of furniture works its device: tap the AC to switch it, the lamp to light it.
     const hit = !this.ctx.editing ? this.pick(e) : undefined;
     if (hit?.entity && this.ctx.hass.states[hit.entity]) {
-      toggle(this.ctx.hass, hit.entity);
+      if (this.tapZoom) this.focusDevice(hit.entity, this.scene.piecePos(hit.id));
+      else toggle(this.ctx.hass, hit.entity);
       return;
     }
     const host = this.renderRoot.querySelector(".canvas")!.getBoundingClientRect();
@@ -219,6 +252,29 @@ export class SnFloorplan extends LitElement {
       this.unfocus();
     }
   };
+
+  private saveAngle() {
+    window.setTimeout(() => this.scene && writePref("sn-plan-azimuth", String(Math.round(this.scene.azimuthDeg * 10) / 10)), 600);
+  }
+
+  private rotate(deg: number) {
+    this.scene?.rotateBy(deg);
+    this.saveAngle();
+  }
+
+  /** Glides into the device's room, centred on the device, and opens its ring of controls. */
+  private focusDevice(id: string, pos?: { x: number; y: number }) {
+    const floor = this.floor;
+    if (!floor || !pos || !this.scene) return;
+    const room = roomAt(floor, pos.x, pos.y);
+    this.focusRoom = room?.id;
+    const panel = this.ctx.phone || this.big ? 0 : Math.min(380, this.clientWidth * 0.42) / 2 + 8;
+    this.scene.flyTo(room, floor, this.ctx.rtl ? -panel : panel, pos);
+    // On a phone the room sheet would cover the device; there the ring is enough.
+    if (room?.area && !this.ctx.phone) this.ctx.selectRoom(room.area);
+    this.ringAt = pos;
+    this.openRing(id);
+  }
 
   /** Back to the whole floor (tapping outside the rooms, the same room again, or closing the room panel). */
   unfocus() {
@@ -373,7 +429,7 @@ export class SnFloorplan extends LitElement {
     const ringDev = this.ring?.split("|")[0];
 
     return html`
-      <div class="canvas" @pointerdown=${this.down} @pointermove=${this.move} @pointerup=${this.up} @pointercancel=${this.up} @wheel=${this.wheel}>
+      <div class="canvas" @contextmenu=${(e: Event) => e.preventDefault()} @pointerdown=${this.down} @pointermove=${this.move} @pointerup=${this.up} @pointercancel=${this.up} @wheel=${this.wheel}>
         ${this.failed ? html`<div class="empty">${t("plan_failed")}</div>` : nothing}
       </div>
       ${scene
@@ -412,7 +468,7 @@ export class SnFloorplan extends LitElement {
                 aria-label=${nameOf(hass, d.id)}
                 title=${nameOf(hass, d.id)}
                 @pointerdown=${(e: PointerEvent) => this.devDown(e, d.id)}
-                @click=${() => !editing && toggle(hass, d.id)}
+                @click=${() => !editing && (this.tapZoom ? this.focusDevice(d.id, d) : toggle(hass, d.id))}
                 @contextmenu=${noMenu}
               >
                 ${icon(entityIcon(d.id, s), 15)}
@@ -449,6 +505,21 @@ export class SnFloorplan extends LitElement {
 
       <div class="ui tools">
         ${editing ? html`<button class="tool wide" @click=${() => openPlanEditor(this.ctx)}>${icon(mdiPencilRuler, 18)}${t("edit_plan")}</button>` : nothing}
+        <button
+          class="tool ${this.tapZoom ? "on" : ""}"
+          aria-pressed=${this.tapZoom}
+          aria-label=${t("tap_zoom")}
+          title=${this.tapZoom ? t("tap_zoom_on") : t("tap_zoom_off")}
+          @click=${() => {
+            this.tapZoom = !this.tapZoom;
+            writePref("sn-plan-tapzoom", this.tapZoom ? "1" : "0");
+            this.ctx.toast(this.tapZoom ? t("tap_zoom_on") : t("tap_zoom_off"));
+          }}
+        >
+          ${icon(mdiCrosshairsGps, 20)}
+        </button>
+        <button class="tool" aria-label=${t("rotate_left")} title=${t("rotate_left")} @click=${() => this.rotate(-45)}>${icon(mdiRotateLeft, 20)}</button>
+        <button class="tool" aria-label=${t("rotate_right")} title=${t("rotate_right")} @click=${() => this.rotate(45)}>${icon(mdiRotateRight, 20)}</button>
         <button class="tool" aria-label="zoom in" @click=${() => scene?.zoomBy(1.25)}>${icon(mdiMagnifyPlusOutline, 20)}</button>
         <button class="tool" aria-label="zoom out" @click=${() => scene?.zoomBy(0.8)}>${icon(mdiMagnifyMinusOutline, 20)}</button>
         <button class="tool" aria-label="fit" @click=${() => scene?.reset(floor)}>${icon(mdiFitToScreenOutline, 20)}</button>
@@ -820,6 +891,12 @@ export class SnFloorplan extends LitElement {
         color: var(--sn-text-on-bg);
         cursor: pointer;
         font-size: 13px;
+      }
+      .tool.on {
+        background: var(--sn-accent);
+        color: #1d1b30;
+        border-color: transparent;
+        box-shadow: 0 0 14px var(--sn-accent-glow);
       }
       .tool.wide {
         padding: 0 16px;

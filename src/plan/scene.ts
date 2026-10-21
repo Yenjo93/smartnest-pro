@@ -29,7 +29,7 @@ const AMBER = new THREE.Color("#ffb347");
 
 /** Isometric-ish view: looking down 52° from above, turned 38° around. */
 const ELEVATION = THREE.MathUtils.degToRad(52);
-const AZIMUTH = THREE.MathUtils.degToRad(38);
+export const DEFAULT_AZIMUTH = 38;
 
 /** A soft round glow drawn once and reused for every room's light pool. */
 function glowTexture(): THREE.Texture {
@@ -74,6 +74,9 @@ export class PlanScene {
   private anim = 0;
   private clock = new THREE.Clock();
   private tween = 0;
+  private spin = 0;
+  /** View direction around the house, in radians. Turned by the rotate buttons and the two-finger twist. */
+  private azimuth = THREE.MathUtils.degToRad(DEFAULT_AZIMUTH);
   /** The current floor's wall height. */
   private wallH = WALL_H;
   private hemi: THREE.HemisphereLight;
@@ -136,9 +139,9 @@ export class PlanScene {
   private placeCamera() {
     const d = 60;
     const off = new THREE.Vector3(
-      Math.sin(AZIMUTH) * Math.cos(ELEVATION) * d,
+      Math.sin(this.azimuth) * Math.cos(ELEVATION) * d,
       Math.sin(ELEVATION) * d,
-      Math.cos(AZIMUTH) * Math.cos(ELEVATION) * d,
+      Math.cos(this.azimuth) * Math.cos(ELEVATION) * d,
     );
     this.camera.position.copy(this.target).add(off);
     this.camera.lookAt(this.target);
@@ -369,9 +372,9 @@ export class PlanScene {
    * Glides the camera to frame a room, or back to the whole floor without one. The view eases in and out
    * over ~0.7 s; the HTML icons follow every frame.
    */
-  flyTo(room: PlanRoom | undefined, floor: PlanFloor, shiftPx = 0) {
+  flyTo(room: PlanRoom | undefined, floor: PlanFloor, shiftPx = 0, focus?: { x: number; y: number }) {
     const b = room ? { x: room.x, y: room.y, w: room.w, h: room.h } : bounds(floor);
-    const toTarget = new THREE.Vector3(b.x + b.w / 2, 0, b.y + b.h / 2);
+    const toTarget = focus ? new THREE.Vector3(focus.x, 0, focus.y) : new THREE.Vector3(b.x + b.w / 2, 0, b.y + b.h / 2);
     let toZoom = 1;
     if (room) {
       // How much of the fitted view this room fills, seen from the camera.
@@ -385,7 +388,7 @@ export class PlanScene {
       const w = Math.max(...pts.map((v) => v.x)) - Math.min(...pts.map((v) => v.x));
       const h = Math.max(...pts.map((v) => v.y)) - Math.min(...pts.map((v) => v.y));
       const aspect = this.size.w / this.size.h;
-      toZoom = THREE.MathUtils.clamp(Math.min(this.span / h, (this.span * aspect) / w) * 0.78, 1, 5);
+      toZoom = THREE.MathUtils.clamp(Math.min(this.span / h, (this.span * aspect) / w) * 0.78 * (focus ? 1.35 : 1), 1, 5);
     }
     if (shiftPx) {
       // Leave room for a side panel: the room centres in what's left of the view.
@@ -410,6 +413,42 @@ export class PlanScene {
       this.tween = k < 1 ? requestAnimationFrame(step) : 0;
     };
     this.tween = requestAnimationFrame(step);
+  }
+
+  get azimuthDeg() {
+    return THREE.MathUtils.radToDeg(this.azimuth);
+  }
+
+  /** Sets the view angle straight away (restoring a saved one). */
+  setAzimuth(deg: number) {
+    this.azimuth = THREE.MathUtils.degToRad(deg);
+    this.placeCamera();
+    this.render();
+  }
+
+  /** Turns the view around the point in the middle of the screen; animated for button presses. */
+  rotateBy(deg: number, animate = true) {
+    cancelAnimationFrame(this.spin);
+    const from = this.azimuth;
+    const to = from + THREE.MathUtils.degToRad(deg);
+    if (!animate) {
+      this.azimuth = to;
+      this.placeCamera();
+      this.render();
+      return;
+    }
+    const start = performance.now();
+    const ms = 550;
+    const step = (now: number) => {
+      const k = Math.min(1, (now - start) / ms);
+      const e = 1 - Math.pow(1 - k, 3);
+      this.azimuth = from + (to - from) * e;
+      this.placeCamera();
+      this.renderer.render(this.scene, this.camera);
+      this.onRender?.();
+      this.spin = k < 1 ? requestAnimationFrame(step) : 0;
+    };
+    this.spin = requestAnimationFrame(step);
   }
 
   /** Moves the view by a screen-pixel drag. */
@@ -483,6 +522,7 @@ export class PlanScene {
     cancelAnimationFrame(this.frame);
     cancelAnimationFrame(this.anim);
     cancelAnimationFrame(this.tween);
+    cancelAnimationFrame(this.spin);
     this.build({ id: "", name: "", rooms: [], doors: [] });
     this.glow.dispose();
     this.renderer.dispose();
