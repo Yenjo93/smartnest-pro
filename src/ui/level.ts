@@ -5,6 +5,8 @@ import type { Ctx } from "../ctx";
 import { shared } from "../styles";
 import { domainOf, isOn } from "../ha";
 import { entityIcon, icon } from "./icon";
+import { lightCaps } from "./light-color";
+import "./light-color";
 
 const PRESETS = [0, 25, 50, 75, 100];
 
@@ -70,7 +72,10 @@ export class SnLevel extends LitElement {
     const cover = domainOf(id) === "cover";
     const pct = this.live ?? this.current();
     const svc = (service: string) => () => hass.callService("cover", service, { entity_id: id });
+    const caps = cover ? undefined : lightCaps(s.attributes);
+    const colour = !!caps && (caps.color || caps.temp);
     return html`
+      <div class="cols ${colour ? "two" : ""}">
       <div class="wrap">
         <div class="value">${pct}<small>%</small></div>
         <div class="sub">${cover ? (pct === 0 ? t("closed") : pct === 100 ? t("opened") : t("position")) : pct === 0 ? t("off") : t("brightness")}</div>
@@ -102,12 +107,28 @@ export class SnLevel extends LitElement {
                 hass.callService("light", "toggle", { entity_id: id })}>${icon(mdiPower)}</button>
             </div>`}
       </div>
+      ${colour ? html`<sn-light-color class="colour" .ctx=${this.ctx} .entity=${id}></sn-light-color>` : ""}
+      </div>
     `;
   }
 
   static styles = [
     shared,
     css`
+      .cols {
+        display: flex;
+        flex-wrap: wrap;
+        justify-content: center;
+        align-items: center;
+        gap: 22px 40px;
+      }
+      .cols.two .track {
+        height: min(300px, 40vh);
+      }
+      .colour {
+        flex: 1;
+        min-width: 260px;
+      }
       .wrap {
         display: grid;
         justify-items: center;

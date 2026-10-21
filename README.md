@@ -29,6 +29,8 @@ Open the panel as an admin on a tablet or computer and press **Edit** (editing i
 - **Live effects**: lights make a pool of light in their colour, running AC tints the floor blue or orange, occupied rooms pulse, and an open door or window sensor lights the room's doorways amber.
 - **Cards**: each card's ⚙ picks its entities: energy meter (kWh, `total_increasing`) and solar sensors, thermostat and humidity, favorite devices, scene/script buttons.
 - **Rooms** come from HA **Areas**. The room panel's ⚙ adds size, and which thermostat, temperature, humidity and occupancy sensor to use, and hides devices.
+- **Robot rooms**: on the Robot page (or the robot's popup), tap rooms on the little plan, pick suction, mop mode and passes, then *Clean*. The first time, an admin taps ⚙ and *Read rooms from the robot* (Roborock): rooms are matched to the plan by name, or picked by hand. Sends `vacuum.send_command` `app_segment_clean` with `[{segments, repeat}]`.
+- **Colour lights**: their popup has brightness next to a colour wheel with quick colours, and a warm-to-cool white slider for lights with colour temperature.
 - **Device names**: as an admin, open any device and tap ✏️ *Rename* to give it a dashboard name (Home Assistant's own name stays as it is; the ↺ button goes back to it).
 - **Settings**: home name, language, theme, default room, reduce effects.
 

@@ -11,6 +11,8 @@ export interface SheetSpec {
   half?: boolean;
   /** Camera and map popups: a wider dialog on tablets and desktops. */
   wide?: boolean;
+  /** Colour lights: brightness and colour side by side. */
+  medium?: boolean;
   /** Header icon (mdi path) and a line under the title, e.g. the room. */
   icon?: string;
   subtitle?: string;
@@ -46,4 +48,6 @@ export interface Ctx {
   toast(message: string): void;
   /** Gives a device a dashboard name (undefined goes back to Home Assistant's). Saves straight away outside edit mode. */
   rename(entityId: string, name: string | undefined): void;
+  /** Changes the layout and saves it straight away (or into the draft in edit mode). For small settings like these. */
+  saveLayout(fn: (cfg: ProConfig) => void): void;
 }

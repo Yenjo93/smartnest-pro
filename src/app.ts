@@ -30,6 +30,12 @@ import { installFonts, shared, tokens } from "./styles";
 import { generalSettings } from "./settings";
 import { icon } from "./ui/icon";
 import { entitySheet } from "./popups/entity-popup";
+import { lightCaps } from "./ui/light-color";
+
+const hasColour = (attrs?: Record<string, any>) => {
+  const c = lightCaps(attrs);
+  return c.color || c.temp;
+};
 import "./ui/sheet";
 import "./ui/level";
 import "./plan/floorplan";
@@ -163,11 +169,14 @@ export class SmartNestProPanel extends LitElement {
       openLevel: (id) =>
         (this.sheet = {
           title: nameOf(this.hass!, id),
+          titleFor: (c) => nameOf(c.hass, id),
+          medium: hasColour(this.hass!.states[id]?.attributes),
           render: (c) => html`<sn-level .ctx=${c} .entity=${id}></sn-level>`,
           back: this.sheet,
         }),
       toast: (m) => this.toast(m),
       rename: (id, name) => this.rename(id, name),
+      saveLayout: (fn) => this.saveLayout(fn),
     };
     return ctx;
   }
@@ -181,13 +190,16 @@ export class SmartNestProPanel extends LitElement {
   }
 
   /** Dashboard names: part of the draft in edit mode, saved straight away otherwise (admins only, like all saving). */
-  private async rename(id: string, name: string | undefined) {
-    const apply = (cfg: ProConfig) => {
+  private rename(id: string, name: string | undefined) {
+    this.saveLayout((cfg) => {
       const names = { ...(cfg.names ?? {}) };
       if (name && name.trim()) names[id] = name.trim();
       else delete names[id];
       cfg.names = names;
-    };
+    });
+  }
+
+  private async saveLayout(apply: (cfg: ProConfig) => void) {
     if (this.draft) {
       const next = clone(this.draft);
       apply(next);

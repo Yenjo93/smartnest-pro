@@ -45,6 +45,8 @@ add("vacuum.cleanbot", "docked", {
 add("image.cleanbot_map", "2026-10-20T08:00:00Z", { friendly_name: "CleanBot Map", entity_picture: "/dev/robot-map.svg" });
 entities["vacuum.cleanbot"].device_id = "dev_robot";
 entities["image.cleanbot_map"].device_id = "dev_robot";
+add("select.cleanbot_mop_mode", "standard", { friendly_name: "Mop mode", options: ["off", "standard", "deep", "deep_plus"] });
+entities["select.cleanbot_mop_mode"].device_id = "dev_robot";
 add("zone.home", "2", { friendly_name: "Home", latitude: 32.0853, longitude: 34.7818, radius: 100 });
 add("person.omar", "home", { friendly_name: "Omar", source: "device_tracker.omar_phone", latitude: 32.0853, longitude: 34.7818 });
 add("person.lina", "Work", { friendly_name: "Lina", source: "device_tracker.lina_phone", latitude: 32.0741, longitude: 34.7922 });
@@ -67,7 +69,10 @@ add("sensor.ac_power", "1450", { friendly_name: "Main Hall AC", device_class: "p
 add("sensor.fridge_power", "120", { friendly_name: "Fridge", device_class: "power", unit_of_measurement: "W" }, "kitchen");
 add("sensor.tv_power", "95", { friendly_name: "TV", device_class: "power", unit_of_measurement: "W" }, "main_hall");
 add("fan.bedroom", "on", { friendly_name: "Bedroom Fan", percentage: 40 }, "master_bedroom");
-add("light.bedside", "on", { friendly_name: "Bedside Lamp", brightness: 90, supported_color_modes: ["hs"], color_mode: "hs", rgb_color: [255, 170, 90] }, "master_bedroom");
+add("light.bedside", "on", {
+  friendly_name: "Bedside Lamp", brightness: 90, supported_color_modes: ["hs", "color_temp"], color_mode: "hs", hs_color: [28, 65], rgb_color: [255, 170, 90],
+  min_color_temp_kelvin: 2200, max_color_temp_kelvin: 6500, color_temp_kelvin: 3000,
+}, "master_bedroom");
 add("light.hue_master_lamp", "on", { friendly_name: "Hue Master Lamp", brightness: 82, supported_color_modes: ["brightness"], color_mode: "brightness" }, "main_hall");
 add("light.led_strip_frame", "on", { friendly_name: "LED Strip Frame", brightness: 200, supported_color_modes: ["hs"], color_mode: "hs", hs_color: [48, 85] }, "main_hall");
 add("media_player.studio_speaker", "playing", { friendly_name: "Pro Max Studio Speaker", volume_level: 0.2 }, "office");
@@ -231,7 +236,9 @@ function callService(domain: string, service: string, data: Record<string, any> 
     else if (service === "turn_on" && domain === "light") {
       const extra: Record<string, any> = {};
       if (data.brightness_pct !== undefined) extra.brightness = Math.round((data.brightness_pct / 100) * 255);
-      if (data.hs_color) extra.hs_color = data.hs_color;
+      if (data.hs_color) Object.assign(extra, { hs_color: data.hs_color, color_mode: "hs", rgb_color: hsRgb(data.hs_color[0], data.hs_color[1]) });
+      if (data.color_temp_kelvin) Object.assign(extra, { color_temp_kelvin: data.color_temp_kelvin, color_mode: "color_temp", rgb_color: undefined });
+      if (data.rgb_color) extra.rgb_color = data.rgb_color;
       set(id, "on", extra);
     } else if (service === "turn_on") set(id, domain === "scene" ? now() : "on");
     else if (service === "turn_off") set(id, "off");
@@ -245,6 +252,10 @@ function callService(domain: string, service: string, data: Record<string, any> 
     else if (service === "set_cover_position") set(id, data.position > 0 ? "open" : "closed", { current_position: data.position });
     else if (service === "open_cover") set(id, "open", { current_position: 100 });
     else if (service === "close_cover") set(id, "closed", { current_position: 0 });
+    else if (service === "send_command") {
+      console.info("mock send_command", JSON.stringify(data));
+      set(id, "cleaning");
+    } else if (service === "select_option") set(id, data.option);
     else if (service === "media_play_pause") set(id, s.state === "playing" ? "paused" : "playing");
     else if (service === "set_fan_speed") set(id, s.state, { fan_speed: data.fan_speed });
     else if (service === "pause") set(id, "paused");
@@ -282,6 +293,14 @@ function historyFor(id: string) {
     for (let t = start; t <= now; t += 900) rows.push({ s: String(+(base + Math.sin(t / 7000) * base * 0.08).toFixed(2)), lu: t });
   }
   return { [id]: rows };
+}
+
+function hsRgb(h: number, s: number): [number, number, number] {
+  const f = (n: number) => {
+    const k = (n + h / 60) % 6;
+    return Math.round(255 * (1 - (s / 100) * Math.max(0, Math.min(k, 4 - k, 1))));
+  };
+  return [f(5), f(3), f(1)];
 }
 
 /** Daily totals for the last 40 days, for the Energy page. */
@@ -330,6 +349,10 @@ async function callWS(msg: Record<string, any>): Promise<any> {
       saved = msg.config;
       configSubs.forEach((cb) => cb({ config: saved }));
       return null;
+    case "call_service":
+      if (msg.domain === "roborock" && msg.service === "get_maps")
+        return { response: { [msg.target.entity_id]: { maps: [{ flag: 0, name: "Ground", rooms: { "16": "Main Hall", "17": "Kitchen", "18": "Office", "19": "Terrace" } }] } } };
+      throw new Error("mock: unknown service");
     case "history/history_during_period":
       return historyFor(msg.entity_ids[0]);
     case "recorder/statistics_during_period":
