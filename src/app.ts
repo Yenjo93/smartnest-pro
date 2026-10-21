@@ -20,6 +20,8 @@ import {
   mdiShieldHomeOutline,
   mdiPlayCircleOutline,
   mdiDotsHorizontal,
+  mdiLockOutline,
+  mdiExitToApp,
 } from "@mdi/js";
 import type { Ctx, SheetSpec } from "./ctx";
 import type { Hass, Palette, PanelInfo, ProConfig } from "./types";
@@ -39,6 +41,7 @@ const hasColour = (attrs?: Record<string, any>) => {
 };
 import "./ui/sheet";
 import "./ui/level";
+import "./ui/pin-pad";
 import "./plan/floorplan";
 import "./cards/energy-card";
 import "./cards/climate-card";
@@ -60,6 +63,34 @@ type Page = "home" | "rooms" | "climate" | "lights" | "robot" | "family" | "ener
 /** Phone tab bar: these first, the rest under "More". */
 const PHONE_TABS: Page[] = ["home", "rooms", "climate", "lights"];
 const PHONE_MAX = 760;
+/** Kiosk mode is per screen: the wall tablet, not every phone and computer. */
+const KIOSK_KEY = "sn-kiosk";
+/** Home Assistant's sidebar setting from before kiosk mode, put back when it ends. */
+const KIOSK_DOCK_KEY = "sn-kiosk-dock";
+const store = {
+  get: (k: string) => {
+    try {
+      return localStorage.getItem(k);
+    } catch {
+      return null;
+    }
+  },
+  set: (k: string, v: string | null) => {
+    try {
+      if (v === null) localStorage.removeItem(k);
+      else localStorage.setItem(k, v);
+    } catch {
+      /* private mode: kiosk mode lasts until the page reloads */
+    }
+  },
+};
+
+/** `?kiosk` in the address turns kiosk mode on for this screen (handy for a non-admin wall tablet), `?kiosk=0` off. */
+function kioskFromUrl(): boolean {
+  const q = new URLSearchParams(location.search);
+  if (q.has("kiosk")) store.set(KIOSK_KEY, q.get("kiosk") === "0" ? null : "1");
+  return store.get(KIOSK_KEY) === "1";
+}
 
 @customElement("smartnest-pro-panel")
 export class SmartNestProPanel extends LitElement {
@@ -81,6 +112,9 @@ export class SmartNestProPanel extends LitElement {
   @state() private width = 1200;
   @state() private query = "";
   @state() private loadError?: string;
+  @state() private kiosk = kioskFromUrl();
+  /** The PIN was entered: editing is open until it's saved or cancelled. */
+  @state() private unlocked = false;
 
   private unsub?: () => void;
   private resize = new ResizeObserver(([e]) => (this.width = e.contentRect.width));
@@ -100,6 +134,63 @@ export class SmartNestProPanel extends LitElement {
 
   protected willUpdate(changed: Map<string, unknown>) {
     if (changed.has("hass") && this.hass && !this.config && !this.loadError) this.load();
+  }
+
+  protected updated(changed: Map<string, unknown>) {
+    if (changed.has("kiosk") || (changed.has("hass") && !changed.get("hass"))) this.applySidebar();
+  }
+
+  /** Hides Home Assistant's sidebar on this screen in kiosk mode (its own "always hidden" setting), and puts the
+   * old setting back after. */
+  private applySidebar() {
+    const dock = (this.hass as (Hass & { dockedSidebar?: string }) | undefined)?.dockedSidebar;
+    if (!this.hass) return;
+    const set = (d: string) => this.dispatchEvent(new CustomEvent("hass-dock-sidebar", { bubbles: true, composed: true, detail: { dock: d } }));
+    if (this.kiosk) {
+      if (dock === "always_hidden") return;
+      if (store.get(KIOSK_DOCK_KEY) === null) store.set(KIOSK_DOCK_KEY, dock ?? "docked");
+      set("always_hidden");
+    } else {
+      const before = store.get(KIOSK_DOCK_KEY);
+      if (before === null) return;
+      store.set(KIOSK_DOCK_KEY, null);
+      if (before !== "always_hidden") set(before);
+    }
+  }
+
+  private setKiosk(on: boolean) {
+    store.set(KIOSK_KEY, on ? "1" : null);
+    this.kiosk = on;
+    if (on) this.unlocked = !!this.draft;
+  }
+
+  /** The PIN pad, then what the PIN opens: editing (admins) or leaving kiosk mode. */
+  private unlock(c: Ctx) {
+    const pin = c.config.settings.kiosk_pin ?? "";
+    const menu = () =>
+      this.sheet = {
+        title: c.t("kiosk_mode"),
+        icon: mdiLockOutline,
+        render: (cc) => html`<div class="more-grid" style="grid-template-columns:repeat(auto-fit,minmax(130px,1fr))">
+          ${this.hass!.user?.is_admin && !this.phone
+            ? html`<button @click=${() => {
+                this.unlocked = true;
+                this.sheet = undefined;
+                this.startEdit();
+              }}><span>${icon(mdiPencilOutline, 26)}</span>${cc.t("edit")}</button>`
+            : nothing}
+          <button @click=${() => {
+            this.sheet = undefined;
+            this.setKiosk(false);
+          }}><span>${icon(mdiExitToApp, 26)}</span>${cc.t("exit_kiosk")}</button>
+        </div>`,
+      };
+    if (!pin) return menu();
+    this.sheet = {
+      title: c.t("enter_pin"),
+      icon: mdiLockOutline,
+      render: (cc) => html`<sn-pin-pad .pin=${pin} .wrongLabel=${cc.t("wrong_pin")} @ok=${menu}></sn-pin-pad>`,
+    };
   }
 
   private async load() {
@@ -165,8 +256,11 @@ export class SmartNestProPanel extends LitElement {
       dark: palette !== "light",
       palette,
       phone: this.phone,
-      isAdmin: !!this.hass!.user?.is_admin,
+      // Kiosk mode: no admin buttons (rename, room settings…) until the PIN is entered.
+      isAdmin: !!this.hass!.user?.is_admin && (!this.kiosk || this.unlocked),
       editing: !!this.draft,
+      kiosk: this.kiosk,
+      setKiosk: (on) => this.setKiosk(on),
       assetBase: this.panel?.config?.asset_base ?? "/smartnest_pro_static/static/",
       room,
       selectRoom: (id) => {
@@ -247,6 +341,7 @@ export class SmartNestProPanel extends LitElement {
   private cancelEdit() {
     this.draft = undefined;
     this.sheet = undefined;
+    this.unlocked = false;
   }
 
   private async save(t: Ctx["t"]) {
@@ -256,6 +351,7 @@ export class SmartNestProPanel extends LitElement {
       this.config = this.draft;
       this.draft = undefined;
       this.sheet = undefined;
+      this.unlocked = false;
       this.toast(t("saved"));
     } catch {
       this.toast(t("save_failed"));
@@ -333,7 +429,12 @@ export class SmartNestProPanel extends LitElement {
     </div>`;
   }
 
+  private lockButton(c: Ctx) {
+    return html`<button class="round lock" aria-label=${c.t("kiosk_mode")} title=${c.t("kiosk_mode")} @click=${() => this.unlock(c)}>${icon(mdiLockOutline, 18)}</button>`;
+  }
+
   private editControls(c: Ctx) {
+    if (this.kiosk && !c.editing) return this.lockButton(c);
     if (!c.isAdmin || this.phone) return nothing;
     if (!c.editing)
       return html`<button class="pill" @click=${this.startEdit}>${icon(mdiPencilOutline, 18)}${c.t("edit")}</button>`;
@@ -496,18 +597,19 @@ export class SmartNestProPanel extends LitElement {
       ${this.phone
         ? html`<div class="shell-phone">
             <header class="top-phone">
-              ${this.narrow
+              ${this.narrow && !this.kiosk
                 ? html`<button class="round" aria-label=${c.t("open_menu")} @click=${() =>
                     this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }))}>${icon(mdiMenu)}</button>`
                 : nothing}
               ${this.greeting(c)} ${this.ecoChip(c)}
+              ${this.kiosk ? html`<span class="spacer"></span>${this.lockButton(c)}` : nothing}
             </header>
             <main>${this.animated(page)}</main>
             ${this.tabbar(c)}
           </div>`
         : html`<div class="shell">
             <div class="brand">
-              ${this.narrow
+              ${this.narrow && !this.kiosk
                 ? html`<button class="round" aria-label=${c.t("open_menu")} @click=${() =>
                     this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }))}>${icon(mdiMenu)}</button>`
                 : html`<svg class="logo" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3 2 11.5h3V21h5.5v-6h3v6H19v-9.5h3z"></path></svg>`}

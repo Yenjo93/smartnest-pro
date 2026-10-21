@@ -32,6 +32,7 @@ Open the panel as an admin on a tablet or computer and press **Edit** (editing i
 - **Robot rooms**: on the Robot page (or the robot's popup), tap rooms on the dashboard's own 3D floor plan (picked rooms light up), pick suction, mop mode and passes, then *Clean*. The first time, an admin taps ⚙ and *Read rooms from the robot* (Roborock): rooms are matched to the plan by name, or picked by hand. Sends `vacuum.send_command` `app_segment_clean` with `[{segments, repeat}]`.
 - **Colour lights**: their popup has brightness next to a colour wheel with quick colours, and a warm-to-cool white slider for lights with colour temperature.
 - **Names at the top and room names**: as an admin, tap the greeting name on Home to set the greeting name and the dashboard title. Tap a room's name in its panel (or use the room's settings) to rename it on the dashboard or hide it.
+- **Kiosk mode**: in *Edit → Settings*, set a PIN and tick *Kiosk mode on this screen*. That screen hides Home Assistant's sidebar, and the Edit button becomes a 🔒: editing, renaming and leaving kiosk mode need the PIN. It is per screen, so your phone stays normal. For a wall tablet signed in as a non-admin user, open the dashboard with `?kiosk` at the end of the address (`?kiosk=0` turns it off).
 - **Device names**: as an admin, open any device and tap ✏️ *Rename* to give it a dashboard name (Home Assistant's own name stays as it is; the ↺ button goes back to it).
 - **Settings**: home name, language, theme, default room, reduce effects.
 

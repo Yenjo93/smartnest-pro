@@ -33,6 +33,9 @@ export interface Ctx {
   phone: boolean;
   isAdmin: boolean;
   editing: boolean;
+  /** Kiosk mode on this screen: Home Assistant's sidebar hidden, editing behind the PIN. */
+  kiosk: boolean;
+  setKiosk(on: boolean): void;
   assetBase: string;
   /** The room the side panel shows. */
   room?: string;
