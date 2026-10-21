@@ -67,7 +67,20 @@ export function roomSettings(ctx: Ctx, areaId: string) {
         });
       const inRoom = entitiesIn(c.hass, areaId);
       // Sensors from the whole house: a room's sensor is often assigned to another area by mistake.
+      const hidden = (c.config.pages.rooms?.hidden ?? []).includes(areaId);
       return html`
+        ${textField(c.t("room_name"), o.name ?? "", (v) => set((r) => (r.name = v.trim() || undefined)))}
+        <label class="check">
+          <input type="checkbox" .checked=${hidden} @change=${(e: Event) => {
+            const on = (e.target as HTMLInputElement).checked;
+            c.update((d) => {
+              const p = (d.pages.rooms ??= {});
+              const list = (p.hidden ?? []).filter((x) => x !== areaId);
+              p.hidden = on ? [...list, areaId] : list;
+            });
+          }} />
+          ${c.t("hide_room")}
+        </label>
         ${textField(c.t("size_m2"), o.size_m2?.toString() ?? "", (v) => set((r) => (r.size_m2 = v ? Number(v) : undefined)), "number")}
         ${entityField(c, c.t("climate_entity"), o.climate, entityOptions(c, ["climate"]), (v) => set((r) => (r.climate = v)))}
         ${entityField(c, c.t("temperature_sensor"), o.temperature, entityOptions(c, ["sensor"], ["temperature"]), (v) =>

@@ -67,6 +67,8 @@ export interface Pin {
 
 /** Extras an HA Area doesn't carry. Every field is optional: the panel guesses from the area's entities. */
 export interface RoomOverride {
+  /** The room's name on the dashboard, instead of the HA Area's. */
+  name?: string;
   size_m2?: number;
   occupancy?: string;
   climate?: string;
@@ -79,6 +81,10 @@ export interface ProConfig {
   version: 1;
   settings: {
     home_name: string;
+    /** Name in the greeting at the top; empty means the signed-in user's first name. */
+    greeting_name?: string;
+    /** The dashboard's title in the top corner; empty means "SmartNest". */
+    title?: string;
     language: Lang | "auto";
     theme: ThemeMode;
     /** No blur and lighter shadows, for slow phones. */
