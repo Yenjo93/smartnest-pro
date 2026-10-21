@@ -124,6 +124,29 @@ export function generalSettings(ctx: Ctx) {
         )}
         <h4>${c.t("floor_plan")}</h4>
         ${multiField(c, c.t("hidden_devices"), c.config.plan.hidden, [], (v) => c.update((d) => (d.plan.hidden = v)))}
+        <h4>${c.t("kiosk_mode")}</h4>
+        <label class="field">
+          <span>${c.t("kiosk_pin")}</span>
+          <input
+            type="password"
+            inputmode="numeric"
+            autocomplete="off"
+            maxlength="8"
+            .value=${s.kiosk_pin ?? ""}
+            @input=${(e: Event) => {
+              const el = e.target as HTMLInputElement;
+              el.value = el.value.replace(/\D/g, "");
+            }}
+            @change=${(e: Event) => c.update((d) => (d.settings.kiosk_pin = (e.target as HTMLInputElement).value || undefined))}
+          />
+        </label>
+        <label class="check">
+          <input type="checkbox" .checked=${c.kiosk} ?disabled=${!s.kiosk_pin && !c.kiosk} @change=${(e: Event) =>
+            c.setKiosk((e.target as HTMLInputElement).checked)} />
+          ${c.t("kiosk_on_device")}
+        </label>
+        <p style="margin:0;font-size:13px;color:var(--sn-text-dim)">${c.t(s.kiosk_pin ? "kiosk_hint" : "kiosk_need_pin")}</p>
+        <h4>${c.t("display")}</h4>
         <label class="check">
           <input type="checkbox" .checked=${s.reduce_effects} @change=${(e: Event) =>
             c.update((d) => (d.settings.reduce_effects = (e.target as HTMLInputElement).checked))} />

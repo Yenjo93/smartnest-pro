@@ -17,7 +17,8 @@ export const fieldStyles = css`
   }
   select,
   input[type="text"],
-  input[type="number"] {
+  input[type="number"],
+  input[type="password"] {
     width: 100%;
     height: 44px;
     padding: 0 12px;

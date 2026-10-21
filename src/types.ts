@@ -90,6 +90,8 @@ export interface ProConfig {
     /** No blur and lighter shadows, for slow phones. */
     reduce_effects: boolean;
     default_room?: string;
+    /** Kiosk mode PIN: needed to edit or leave kiosk mode on a device that has it on. */
+    kiosk_pin?: string;
   };
   hero: { image?: string; pins: Pin[] };
   home: {
