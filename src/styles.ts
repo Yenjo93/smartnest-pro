@@ -72,6 +72,34 @@ export const tokens = css`
     --sn-glass: #2a2724;
     --sn-glass-strong: #322e2b;
   }
+  /* Night purple: deep indigo with lavender glass, a blue accent and an orange "warm" accent. */
+  :host([palette="purple"]) {
+    --sn-bg: radial-gradient(70% 55% at 15% 100%, rgba(214, 120, 220, 0.38) 0%, rgba(214, 120, 220, 0) 70%),
+      radial-gradient(120% 90% at 70% 0%, #4d43a6 0%, #29235f 45%, #15122f 100%);
+    --sn-text-on-bg: #f4f2ff;
+    --sn-text-on-bg-dim: rgba(226, 222, 255, 0.6);
+    --sn-glass: rgba(118, 106, 214, 0.2);
+    --sn-glass-strong: rgba(64, 54, 150, 0.62);
+    --sn-glass-light: rgba(150, 140, 240, 0.14);
+    --sn-glass-border: rgba(200, 190, 255, 0.16);
+    --sn-glass-hi: rgba(220, 214, 255, 0.24);
+    --sn-text: #f4f2ff;
+    --sn-text-dim: rgba(226, 222, 255, 0.62);
+    --sn-text-faint: rgba(226, 222, 255, 0.38);
+    --sn-ink: #110e29;
+    --sn-chip: rgba(160, 150, 255, 0.12);
+    --sn-accent: #9fb0ff;
+    --sn-accent-strong: #7d90ff;
+    --sn-accent-glow: rgba(140, 160, 255, 0.55);
+    --sn-warm: #ff8a3d;
+    --sn-shadow: 0 18px 40px -18px rgba(8, 4, 30, 0.8);
+    --sn-hero-filter: none;
+    --sn-hero-fade: 72%;
+  }
+  :host([palette="purple"][lowfx]) {
+    --sn-glass: #2c2670;
+    --sn-glass-strong: #352e85;
+  }
 `;
 
 /** The frosted card every panel sits on, plus small shared pieces. Included by each component. */

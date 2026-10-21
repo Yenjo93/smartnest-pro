@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="20 40 160 160" width="512" height="512">
+  <defs>
+    <linearGradient id="mdroof" x1="0" y1="0" x2="1" y2="0.4"><stop offset="0" stop-color="#f3efe9"/><stop offset="1" stop-color="#cfc6bb"/></linearGradient>
+    <linearGradient id="mdnest" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#d9d0c5"/><stop offset="1" stop-color="#8e857b"/></linearGradient>
+    <linearGradient id="mdbody" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#efe9e1"/></linearGradient>
+    <linearGradient id="mdwin" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#eefadf"/><stop offset="1" stop-color="#8fc75c"/></linearGradient>
+    <radialGradient id="mdglow" cx="0.5" cy="0.5" r="0.5"><stop offset="0" stop-color="#b5dc8f" stop-opacity="0.9"/><stop offset="0.6" stop-color="#b5dc8f" stop-opacity="0.25"/><stop offset="1" stop-color="#b5dc8f" stop-opacity="0"/></radialGradient>
+    <linearGradient id="mdsheen" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#fff" stop-opacity="0.35"/><stop offset="0.45" stop-color="#fff" stop-opacity="0"/></linearGradient>
+    <mask id="mdcuts" maskUnits="userSpaceOnUse" x="0" y="0" width="200" height="200">
+      <rect width="200" height="200" fill="#fff"/>
+      <g fill="none" stroke="#000" stroke-width="5.5" stroke-linecap="round">
+        <path d="M30 128 C 70 166, 128 168, 172 122"/>
+        <path d="M48 160 C 86 186, 136 180, 166 148"/>
+      </g>
+    </mask>
+  </defs>
+  <path d="M60 100 L100 66 L140 100 V146 H60 Z" fill="url(#mdbody)"/>
+  <circle cx="100" cy="113" r="30" fill="url(#mdglow)"/>
+  <g fill="url(#mdwin)">
+    <rect x="85" y="98" width="13.5" height="13.5" rx="3.5"/><rect x="101.5" y="98" width="13.5" height="13.5" rx="3.5"/>
+    <rect x="85" y="114.5" width="13.5" height="13.5" rx="3.5"/><rect x="101.5" y="114.5" width="13.5" height="13.5" rx="3.5"/>
+  </g>
+  <rect x="130" y="54" width="14" height="30" rx="4.5" fill="url(#mdroof)"/>
+  <path d="M44 100 L100 54 L156 100" fill="none" stroke="url(#mdroof)" stroke-width="15" stroke-linecap="round" stroke-linejoin="round"/>
+  <g mask="url(#mdcuts)">
+    <path d="M30 112 C 34 160, 66 190, 102 190 C 140 190, 170 160, 172 106 C 140 146, 64 150, 30 112 Z" fill="url(#mdnest)"/>
+    <path d="M30 112 C 34 160, 66 190, 102 190 C 140 190, 170 160, 172 106 C 140 146, 64 150, 30 112 Z" fill="url(#mdsheen)"/>
+  </g></svg>

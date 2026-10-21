@@ -220,7 +220,7 @@ export class SnDevicesCard extends LitElement {
         flex: 1;
         display: flex;
         flex-direction: column;
-        min-height: 230px;
+        min-height: var(--tile-min-h, 230px);
         padding: 16px;
         border-radius: 22px;
         background: rgba(255, 255, 255, 0.07);

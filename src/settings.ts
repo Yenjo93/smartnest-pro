@@ -1,8 +1,7 @@
 // The sheets edit mode opens. Each reads the live draft from the ctx it is rendered with and writes through ctx.update.
 import { html } from "lit";
 import type { Ctx } from "./ctx";
-import type { Pin } from "./types";
-import { areas, nameOf, NODE_DOMAINS, entitiesIn } from "./ha";
+import { areas, NODE_DOMAINS, entitiesIn } from "./ha";
 import { entityField, entityOptions, multiField, selectField, textField } from "./ui/fields";
 
 export function energySettings(ctx: Ctx) {
@@ -96,12 +95,22 @@ export function generalSettings(ctx: Ctx) {
         ${selectField(c.t("language"), s.language, [["auto", c.t("lang_auto")], ["en", "English"], ["ar", "العربية"]], (v) =>
           c.update((d) => (d.settings.language = v as typeof s.language)),
         )}
-        ${selectField(c.t("theme"), s.theme, [["auto", c.t("theme_auto")], ["light", c.t("theme_light")], ["dark", c.t("theme_dark")]], (v) =>
+        ${selectField(c.t("theme"), s.theme, [["auto", c.t("theme_auto")], ["light", c.t("theme_light")], ["dark", c.t("theme_dark")], ["purple", c.t("theme_purple")]], (v) =>
           c.update((d) => (d.settings.theme = v as typeof s.theme)),
         )}
         ${selectField(c.t("default_room"), s.default_room ?? "", [["", c.t("none")], ...areas(c.hass).map((a) => [a.area_id, a.name] as [string, string])], (v) =>
           c.update((d) => (d.settings.default_room = v || undefined)),
         )}
+        <h4>${c.t("energy_usage")}</h4>
+        ${entityField(c, c.t("energy_meter"), c.config.home.energy, entityOptions(c, ["sensor"], ["energy"]), (v) => c.update((d) => (d.home.energy = v)))}
+        ${entityField(c, c.t("solar_power"), c.config.home.solar_power, entityOptions(c, ["sensor"], ["power"]), (v) =>
+          c.update((d) => (d.home.solar_power = v)),
+        )}
+        ${entityField(c, c.t("solar_energy"), c.config.home.solar_energy, entityOptions(c, ["sensor"], ["energy"]), (v) =>
+          c.update((d) => (d.home.solar_energy = v)),
+        )}
+        <h4>${c.t("floor_plan")}</h4>
+        ${multiField(c, c.t("hidden_devices"), c.config.plan.hidden, [], (v) => c.update((d) => (d.plan.hidden = v)))}
         <label class="check">
           <input type="checkbox" .checked=${s.reduce_effects} @change=${(e: Event) =>
             c.update((d) => (d.settings.reduce_effects = (e.target as HTMLInputElement).checked))} />
@@ -111,52 +120,3 @@ export function generalSettings(ctx: Ctx) {
     },
   });
 }
-
-export function pinSettings(ctx: Ctx, pinId: string) {
-  ctx.showSheet({
-    title: ctx.t("pin"),
-    render: (c) => {
-      const pin = c.config.hero.pins.find((p) => p.id === pinId);
-      if (!pin) return html``;
-      const set = (fn: (p: Pin) => void) =>
-        c.update((d) => {
-          const p = d.hero.pins.find((x) => x.id === pinId);
-          if (p) fn(p);
-        });
-      const kind = pin.entity ? "entity" : "area";
-      return html`
-        ${selectField(c.t("pin"), kind, [["area", c.t("pin_room")], ["entity", c.t("pin_device")]], (v) =>
-          set((p) => {
-            if (v === "area") p.entity = undefined;
-            else {
-              p.area = undefined;
-              p.entity = p.entity ?? "";
-            }
-          }),
-        )}
-        ${kind === "area"
-          ? selectField(c.t("pin_room"), pin.area ?? "", [["", c.t("none")], ...areas(c.hass).map((a) => [a.area_id, a.name] as [string, string])], (v) =>
-              set((p) => (p.area = v || undefined)),
-            )
-          : entityField(c, c.t("pin_device"), pin.entity || undefined, entityOptions(c, [...NODE_DOMAINS, "climate", "sensor", "binary_sensor", "alarm_control_panel"]), (v) =>
-              set((p) => (p.entity = v ?? "")),
-            )}
-        ${textField(c.t("label"), pin.label ?? "", (v) => set((p) => (p.label = v || undefined)))}
-        <button
-          class="danger"
-          style="height:44px;padding:0 18px;border-radius:14px;border:0;background:#8a3b2e;color:#fff;font-size:15px;cursor:pointer"
-          @click=${() => {
-            c.update((d) => (d.hero.pins = d.hero.pins.filter((p) => p.id !== pinId)));
-            c.closeSheet();
-          }}
-        >
-          ${c.t("delete")}
-        </button>
-      `;
-    },
-  });
-}
-
-/** A pin's visible name: its own label, else its room or device name. */
-export const pinLabel = (ctx: Ctx, pin: Pin) =>
-  pin.label || (pin.area ? ctx.hass.areas?.[pin.area]?.name : pin.entity ? nameOf(ctx.hass, pin.entity) : "") || "•";

@@ -7,6 +7,7 @@ export const defaultConfig = (): ProConfig => ({
   home: { devices: [], scenes: [] },
   rooms: {},
   pages: {},
+  plan: { floors: [], devices: {}, hidden: [] },
 });
 
 /** Fills anything a saved layout is missing, so older or hand-edited layouts never crash the panel. */
@@ -29,6 +30,19 @@ export function normalize(raw: unknown): ProConfig {
     },
     rooms: c.rooms && typeof c.rooms === "object" ? c.rooms : {},
     pages: c.pages && typeof c.pages === "object" ? c.pages : {},
+    plan: {
+      floors: Array.isArray(c.plan?.floors)
+        ? c.plan!.floors.map((f) => ({
+            ...f,
+            rooms: Array.isArray(f.rooms) ? f.rooms : [],
+            doors: Array.isArray(f.doors) ? f.doors : [],
+            furniture: Array.isArray(f.furniture) ? f.furniture : [],
+            walls: Array.isArray(f.walls) ? f.walls : [],
+          }))
+        : [],
+      devices: c.plan?.devices && typeof c.plan.devices === "object" ? c.plan.devices : {},
+      hidden: Array.isArray(c.plan?.hidden) ? c.plan!.hidden : [],
+    },
   };
 }
 
