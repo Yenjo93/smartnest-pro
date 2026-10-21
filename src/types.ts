@@ -175,6 +175,8 @@ export interface PlanFurniture {
   z?: number;
   /** Size multiplier, 1 = catalog size. */
   scale?: number;
+  /** Extra stretch along the piece's width only (a longer counter, a wider wardrobe), 1 = as built. */
+  stretch?: number;
 }
 
 export interface PlanFloor {

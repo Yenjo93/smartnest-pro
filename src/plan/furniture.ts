@@ -7,6 +7,7 @@ import * as THREE from "three";
 import { RoundedBoxGeometry } from "three/examples/jsm/geometries/RoundedBoxGeometry.js";
 import type { HassEntity, Palette } from "../types";
 import { isOn } from "../ha";
+import { buildExtra } from "./furniture-extra";
 
 export interface Mats {
   fabric: THREE.MeshStandardMaterial;
@@ -55,12 +56,12 @@ export function makeMats(p: Palette, glow: THREE.Texture): Mats {
 
 // ---------- building blocks ----------
 
-const rb = (w: number, h: number, d: number, r = 0.03) =>
+export const rb = (w: number, h: number, d: number, r = 0.03) =>
   new RoundedBoxGeometry(w, h, d, 2, Math.max(0.002, Math.min(r, Math.min(w, h, d) / 2 - 0.001)));
-const cyl = (rt: number, rbot: number, h: number, seg = 20) => new THREE.CylinderGeometry(rt, rbot, h, seg);
-const sphere = (r: number, w = 16, h = 12) => new THREE.SphereGeometry(r, w, h);
+export const cyl = (rt: number, rbot: number, h: number, seg = 20) => new THREE.CylinderGeometry(rt, rbot, h, seg);
+export const sphere = (r: number, w = 16, h = 12) => new THREE.SphereGeometry(r, w, h);
 
-function add(g: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0, shadow = true) {
+export function add(g: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, x = 0, y = 0, z = 0, shadow = true) {
   const m = new THREE.Mesh(geo, mat);
   m.position.set(x, y, z);
   m.castShadow = shadow;
@@ -70,11 +71,11 @@ function add(g: THREE.Object3D, geo: THREE.BufferGeometry, mat: THREE.Material, 
 }
 
 /** A material that lights up: its own copy, so one lamp glowing doesn't light every lamp. */
-const emissive = (color = "#fbf6ec", rough = 0.6) =>
+export const emissive = (color = "#fbf6ec", rough = 0.6) =>
   new THREE.MeshStandardMaterial({ color, roughness: rough, emissive: "#000000", side: THREE.DoubleSide });
 
 /** A soft round glow that always faces the camera: the light a lamp throws. */
-function glowSprite(m: Mats, size: number) {
+export function glowSprite(m: Mats, size: number) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: m.glow, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, opacity: 0 }));
   s.scale.set(size, size, 1);
   s.visible = false;
@@ -82,12 +83,12 @@ function glowSprite(m: Mats, size: number) {
   return s;
 }
 
-function legs(g: THREE.Object3D, w: number, d: number, h: number, mat: THREE.Material, inset = 0.06, r = 0.022) {
+export function legs(g: THREE.Object3D, w: number, d: number, h: number, mat: THREE.Material, inset = 0.06, r = 0.022) {
   for (const sx of [-1, 1]) for (const sz of [-1, 1]) add(g, cyl(r, r, h, 10), mat, sx * (w / 2 - inset), h / 2, sz * (d / 2 - inset));
 }
 
 /** Seating with a back along -z and arms on the sides. */
-function sofa(m: Mats, w: number, d: number, seats: number, fabric = m.fabric, frame = m.fabric2) {
+export function sofa(m: Mats, w: number, d: number, seats: number, fabric = m.fabric, frame = m.fabric2) {
   const g = new THREE.Group();
   add(g, rb(w, 0.2, d, 0.05), frame, 0, 0.12, 0);
   const cw = (w - 0.36) / seats;
@@ -97,7 +98,7 @@ function sofa(m: Mats, w: number, d: number, seats: number, fabric = m.fabric, f
   return g;
 }
 
-function chair(m: Mats, seat = m.fabric) {
+export function chair(m: Mats, seat = m.fabric) {
   const g = new THREE.Group();
   add(g, rb(0.44, 0.05, 0.44, 0.02), seat, 0, 0.3, 0);
   add(g, rb(0.44, 0.3, 0.05, 0.02), seat, 0, 0.48, -0.2);
@@ -105,7 +106,7 @@ function chair(m: Mats, seat = m.fabric) {
   return g;
 }
 
-function table(m: Mats, w: number, d: number, h: number, round = false, top = m.wood) {
+export function table(m: Mats, w: number, d: number, h: number, round = false, top = m.wood) {
   const g = new THREE.Group();
   if (round) {
     add(g, cyl(w / 2, w / 2, 0.05, 36), top, 0, h, 0);
@@ -119,7 +120,7 @@ function table(m: Mats, w: number, d: number, h: number, round = false, top = m.
 }
 
 /** Chairs along both long sides of a table, `n` per side. */
-function seatsAround(g: THREE.Group, m: Mats, w: number, d: number, n: number) {
+export function seatsAround(g: THREE.Group, m: Mats, w: number, d: number, n: number) {
   for (let i = 0; i < n; i++) {
     const x = -w / 2 + (w / n) * (i + 0.5);
     for (const s of [-1, 1]) {
@@ -131,7 +132,7 @@ function seatsAround(g: THREE.Group, m: Mats, w: number, d: number, n: number) {
   }
 }
 
-function cabinet(m: Mats, w: number, h: number, d: number, body = m.white, doors = 2) {
+export function cabinet(m: Mats, w: number, h: number, d: number, body = m.white, doors = 2) {
   const g = new THREE.Group();
   add(g, rb(w, h, d, 0.025), body, 0, h / 2, 0);
   for (let i = 1; i < doors; i++) add(g, new THREE.BoxGeometry(0.008, h * 0.92, 0.01), m.metal, -w / 2 + (w / doors) * i, h / 2, d / 2 + 0.001, false);
@@ -139,7 +140,7 @@ function cabinet(m: Mats, w: number, h: number, d: number, body = m.white, doors
   return g;
 }
 
-function plant(m: Mats, h: number, pot = m.white) {
+export function plant(m: Mats, h: number, pot = m.white) {
   const g = new THREE.Group();
   add(g, cyl(0.14, 0.11, 0.24, 18), pot, 0, 0.12, 0);
   const n = Math.max(3, Math.round(h * 5));
@@ -151,7 +152,7 @@ function plant(m: Mats, h: number, pot = m.white) {
   return g;
 }
 
-function tree(m: Mats, h: number, pine = false) {
+export function tree(m: Mats, h: number, pine = false) {
   const g = new THREE.Group();
   add(g, cyl(0.06, 0.09, h * 0.45, 10), m.woodDark, 0, h * 0.22, 0);
   if (pine) for (let i = 0; i < 3; i++) add(g, new THREE.ConeGeometry(0.55 - i * 0.14, h * 0.35, 12), m.green, 0, h * (0.45 + i * 0.18), 0);
@@ -166,14 +167,14 @@ function tree(m: Mats, h: number, pine = false) {
   return g;
 }
 
-function screenPanel(g: THREE.Object3D, w: number, h: number, x: number, y: number, z: number, frame: THREE.Material) {
+export function screenPanel(g: THREE.Object3D, w: number, h: number, x: number, y: number, z: number, frame: THREE.Material) {
   add(g, rb(w + 0.06, h + 0.06, 0.04, 0.015), frame, x, y, z);
   const mat = emissive("#0b0b10", 0.2);
   add(g, new THREE.PlaneGeometry(w, h), mat, x, y, z + 0.021, false);
   return mat;
 }
 
-const mirrorMat = () => new THREE.MeshStandardMaterial({ color: "#dfe9f2", metalness: 0.9, roughness: 0.05 });
+export const mirrorMat = () => new THREE.MeshStandardMaterial({ color: "#dfe9f2", metalness: 0.9, roughness: 0.05 });
 
 // ---------- reactions ----------
 
@@ -185,10 +186,10 @@ export interface Piece {
   tick?(dt: number, t: number): void;
 }
 
-const still = (group: THREE.Group): Piece => ({ group, active: false, update() {} });
+export const still = (group: THREE.Group): Piece => ({ group, active: false, update() {} });
 
 /** Light colour of a light entity, as a three.js colour; a warm white for plain on/off things. */
-function lightColor(s?: HassEntity, fallback = "#ffd9a0"): THREE.Color {
+export function lightColor(s?: HassEntity, fallback = "#ffd9a0"): THREE.Color {
   const rgb = s?.attributes.rgb_color as number[] | undefined;
   if (rgb) return new THREE.Color().setRGB(rgb[0] / 255, rgb[1] / 255, rgb[2] / 255, THREE.SRGBColorSpace);
   return new THREE.Color(fallback);
@@ -219,7 +220,7 @@ interface SmartParts {
 }
 
 /** Wires a piece's glowing, spinning and looping parts to its device's state. */
-function smart(group: THREE.Group, p: SmartParts): Piece {
+export function smart(group: THREE.Group, p: SmartParts): Piece {
   const piece: Piece = {
     group,
     active: false,
@@ -248,13 +249,13 @@ function smart(group: THREE.Group, p: SmartParts): Piece {
 }
 
 /** Appliances that only glow when on: stove burners, oven window, toaster… */
-function glowing(g: THREE.Group, mats: THREE.MeshStandardMaterial[], color: string, sprite?: THREE.Sprite): Piece {
+export function glowing(g: THREE.Group, mats: THREE.MeshStandardMaterial[], color: string, sprite?: THREE.Sprite): Piece {
   if (sprite) g.add(sprite);
   return smart(g, { glows: mats, sprites: sprite ? [sprite] : [], color, intensity: 1.4 });
 }
 
 /** Rising puffs of steam or mist, shown only while on. */
-function steam(m: Mats, g: THREE.Group, y: number) {
+export function steam(m: Mats, g: THREE.Group, y: number) {
   const puffs = Array.from({ length: 3 }, () => {
     const s = glowSprite(m, 0.18);
     g.add(s);
@@ -459,7 +460,7 @@ function fan(m: Mats, kind: "ceiling" | "floor" | "purifier"): Piece {
 }
 
 /** Screens: on lights them, playing makes the picture gently change colour. */
-function screenReact(g: THREE.Group, screen: THREE.MeshStandardMaterial, glow?: THREE.Sprite, base = "#8fb4ff"): Piece {
+export function screenReact(g: THREE.Group, screen: THREE.MeshStandardMaterial, glow?: THREE.Sprite, base = "#8fb4ff"): Piece {
   const col = new THREE.Color(base);
   const piece: Piece = {
     group: g,
@@ -498,7 +499,7 @@ function tv(m: Mats, unit: boolean): Piece {
   return screenReact(g, screen, glow);
 }
 
-const coverPos = (s?: HassEntity) =>
+export const coverPos = (s?: HassEntity) =>
   (typeof s?.attributes.current_position === "number" ? s.attributes.current_position : s?.state === "open" ? 100 : 0) / 100;
 
 /** Fabric curtain panels that gather to the sides as the cover opens. Height follows the walls. */
@@ -1423,8 +1424,11 @@ export function buildPiece(type: string, m: Mats, env: BuildEnv): Piece {
       add(g, cyl(0.015, 0.015, 0.5, 8), m.accent, 0, 0.55, 0.25);
       add(g, rb(0.08, 0.04, 0.2, 0.02), m.black, 0, 0.8, -0.15);
       return still(g);
-    default:
+    default: {
+      const extra = buildExtra(type, m, env);
+      if (extra) return extra;
       add(g, rb(0.5, 0.4, 0.5, 0.05), m.fabric2, 0, 0.2, 0);
       return still(g);
+    }
   }
 }
