@@ -6,6 +6,7 @@ import { shared } from "../styles";
 import { entityIcon, icon } from "../ui/icon";
 import { climateTarget, isOn, nameOf, roomInfo, setTemp, toggle, unavailable } from "../ha";
 import { roomSettings } from "../settings";
+import { textField } from "../ui/fields";
 import { hasLevel, noMenu, onHold } from "../ui/hold";
 
 const TICKS = 64;
@@ -117,6 +118,37 @@ export class SnRoomPanel extends LitElement {
     </div>`;
   }
 
+  /** Rename or hide the room straight from its panel (admins); saved straight away. */
+  private renameRoom(area: string) {
+    const ctx = this.ctx;
+    ctx.showSheet({
+      title: ctx.t("room_settings"),
+      render: (c) => {
+        const hidden = (c.config.pages.rooms?.hidden ?? []).includes(area);
+        return html`
+          ${textField(c.t("room_name"), c.config.rooms[area]?.name ?? "", (v) =>
+            c.saveLayout((d) => {
+              const r = (d.rooms[area] ??= {});
+              r.name = v.trim() || undefined;
+            }),
+          )}
+          <label class="check">
+            <input type="checkbox" .checked=${hidden} @change=${(e: Event) => {
+              const on = (e.target as HTMLInputElement).checked;
+              c.saveLayout((d) => {
+                const p = (d.pages.rooms ??= {});
+                const list = (p.hidden ?? []).filter((x) => x !== area);
+                p.hidden = on ? [...list, area] : list;
+              });
+              if (on) c.closeSheet();
+            }} />
+            ${c.t("hide_room")}
+          </label>
+        `;
+      },
+    });
+  }
+
   render() {
     const { t, hass, config, editing } = this.ctx;
     const area = this.area;
@@ -126,7 +158,11 @@ export class SnRoomPanel extends LitElement {
       info.people !== undefined ? (info.people > 0 ? t("taken_people", { n: info.people }) : t("free")) : info.occupied !== undefined ? (info.occupied ? t("taken") : t("free")) : undefined;
     return html`<div class="wrap ${this.bare ? "" : "glass"}">
       <div class="top">
-        ${this.bare ? html`<span class="spacer"></span>` : html`<span class="round">${icon(mdiDoorOpen, 20)}</span><h2>${info.name}</h2>`}
+        ${this.bare ? html`<span class="spacer"></span>` : html`<span class="round">${icon(mdiDoorOpen, 20)}</span>${
+              this.ctx.isAdmin
+                ? html`<h2><button class="name-btn" title=${t("rename")} @click=${() => this.renameRoom(area)}>${info.name}</button></h2>`
+                : html`<h2>${info.name}</h2>`
+            }`}
         <div class="meta">
           <span class="chip small">ID: ${area}</span>
           ${info.size ? html`<span class="chip small">${info.size} m²</span>` : nothing}
@@ -214,6 +250,14 @@ export class SnRoomPanel extends LitElement {
         align-items: center;
         gap: 12px;
         flex-wrap: wrap;
+      }
+      .name-btn {
+        all: unset;
+        cursor: pointer;
+        border-bottom: 1px dashed transparent;
+      }
+      .name-btn:hover {
+        border-bottom-color: currentColor;
       }
       h2 {
         flex: 1;

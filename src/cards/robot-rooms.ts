@@ -1,7 +1,7 @@
 // Room cleaning for robot vacuums (Roborock and others that clean by "segment"): pick rooms on a small top-down
 // plan, set suction, mop mode and how many passes, then send the robot. Each plan room is linked once to the
 // robot's own room number; Roborock's rooms can be read straight from the robot to make that quick.
-import { LitElement, css, html, nothing, svg } from "lit";
+import { LitElement, css, html, nothing } from "lit";
 import { customElement, property, state } from "lit/decorators.js";
 import { mdiCog, mdiMagnify, mdiPlay, mdiSelectAll } from "@mdi/js";
 import type { Ctx } from "../ctx";
@@ -10,7 +10,7 @@ import { shared } from "../styles";
 import { icon } from "../ui/icon";
 import { fieldStyles } from "../ui/fields";
 import { domainOf, nameOf, siblings } from "../ha";
-import { bounds, innerPoint, roomPts } from "../plan/geometry";
+import "../plan/floorplan";
 
 type RobotRoom = { id: number; name: string; map?: string };
 
@@ -107,7 +107,6 @@ export class SnRobotRooms extends LitElement {
     const mapped = floor ? floor.rooms.filter((r) => Number.isFinite(map[r.id])) : [];
     const usePlan = !!floor && mapped.length > 0;
     const speeds: string[] = s.attributes.fan_speed_list ?? [];
-    const b = floor ? bounds(floor) : undefined;
     const count = this.segments(floor).length;
 
     return html`<div class="box">
@@ -128,18 +127,15 @@ export class SnRobotRooms extends LitElement {
           : nothing}
       </div>
 
-      ${usePlan && b
-        ? html`<svg class="plan" viewBox="${b.x - 0.3} ${b.y - 0.3} ${b.w + 0.6} ${b.h + 0.6}">
-            ${floor!.rooms.map((r) => {
-              const on = this.picked.has(r.id);
-              const ok = Number.isFinite(map[r.id]);
-              const c = innerPoint(r);
-              return svg`<g class="r ${on ? "on" : ""} ${ok ? "" : "off"}" @click=${() => ok && this.toggle(r.id)}>
-                <polygon points=${roomPts(r).map((p) => `${p.x},${p.y}`).join(" ")}></polygon>
-                <text x=${c.x} y=${c.y} font-size=${Math.min(0.55, Math.max(0.28, r.w / 7))}>${roomName(this.ctx, floor!, r.id)}</text>
-              </g>`;
-            })}
-          </svg>`
+      ${usePlan
+        ? html`<sn-floorplan
+            pick
+            .ctx=${this.ctx}
+            .fixedFloor=${floor!.id}
+            .picked=${this.picked}
+            .pickable=${new Set(mapped.map((r) => r.id))}
+            @room-pick=${(e: CustomEvent<string>) => this.toggle(e.detail)}
+          ></sn-floorplan>`
         : this.direct?.length
           ? html`<div class="chips">
               ${this.direct.map(

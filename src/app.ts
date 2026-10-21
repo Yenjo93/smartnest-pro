@@ -28,6 +28,7 @@ import { resolveLang, translator } from "./i18n";
 import { areas, nameOf, powerKw, roomInfo, setNameOverrides } from "./ha";
 import { installFonts, shared, tokens } from "./styles";
 import { generalSettings } from "./settings";
+import { textField } from "./ui/fields";
 import { icon } from "./ui/icon";
 import { entitySheet } from "./popups/entity-popup";
 import { lightCaps } from "./ui/light-color";
@@ -129,8 +130,23 @@ export class SmartNestProPanel extends LitElement {
   private defaultRoom(cfg: ProConfig): string | undefined {
     const hass = this.hass!;
     if (cfg.settings.default_room && hass.areas?.[cfg.settings.default_room]) return cfg.settings.default_room;
-    const list = areas(hass);
+    const hidden = cfg.pages.rooms?.hidden ?? [];
+    const list = areas(hass).filter((a) => !hidden.includes(a.area_id));
     return list.find((a) => roomInfo(hass, a.area_id, cfg.rooms[a.area_id]).occupied)?.area_id ?? list[0]?.area_id;
+  }
+
+  /** The hass object with room (Area) names swapped for the dashboard's own, so every page shows them. */
+  private named?: { src: Hass; key: string; out: Hass };
+  private withRoomNames(hass: Hass, config: ProConfig): Hass {
+    const renamed = Object.entries(config.rooms).filter(([, r]) => r.name);
+    if (!renamed.length || !hass.areas) return hass;
+    const key = JSON.stringify(renamed.map(([id, r]) => [id, r.name]));
+    if (this.named && this.named.src === hass && this.named.key === key) return this.named.out;
+    const areas = { ...hass.areas };
+    for (const [id, r] of renamed) if (areas[id]) areas[id] = { ...areas[id], name: r.name! };
+    const out = { ...hass, areas } as Hass;
+    this.named = { src: hass, key, out };
+    return out;
   }
 
   private ctx(): Ctx {
@@ -141,7 +157,7 @@ export class SmartNestProPanel extends LitElement {
     const theme = config.settings.theme;
     const palette: Palette = theme === "purple" ? "purple" : theme === "dark" || (theme === "auto" && !!this.hass!.themes?.darkMode) ? "dark" : "light";
     const ctx: Ctx = {
-      hass: this.hass!,
+      hass: this.withRoomNames(this.hass!, config),
       config,
       t: translator(lang),
       lang,
@@ -249,8 +265,24 @@ export class SmartNestProPanel extends LitElement {
   private greeting(c: Ctx) {
     const h = new Date().getHours();
     const hello = h < 12 ? c.t("good_morning") : h < 18 ? c.t("good_afternoon") : c.t("good_evening");
-    const name = this.hass!.user?.name?.split(" ")[0] ?? c.config.settings.home_name;
-    return html`<div class="greet"><span>${hello}</span><strong>${name}</strong></div>`;
+    const name = c.config.settings.greeting_name || this.hass!.user?.name?.split(" ")[0] || c.config.settings.home_name;
+    return html`<div class="greet"><span>${hello}</span>${
+      c.isAdmin
+        ? html`<button class="greet-name" title=${c.t("rename")} @click=${() => this.renameTop(c)}>${name}</button>`
+        : html`<strong>${name}</strong>`
+    }</div>`;
+  }
+
+  /** The names at the top: the greeting's name and the dashboard title. Saved straight away. */
+  private renameTop(c: Ctx) {
+    c.showSheet({
+      title: c.t("names_on_top"),
+      render: (cc) => html`
+        ${textField(cc.t("greeting_name"), cc.config.settings.greeting_name ?? "", (v) => cc.saveLayout((d) => (d.settings.greeting_name = v.trim() || undefined)))}
+        ${textField(cc.t("dashboard_title"), cc.config.settings.title ?? "", (v) => cc.saveLayout((d) => (d.settings.title = v.trim() || undefined)))}
+        <p style="margin:0;font-size:13px;color:var(--sn-text-dim)">${cc.t("names_on_top_hint")}</p>
+      `,
+    });
   }
 
   private ecoChip(c: Ctx) {
@@ -479,7 +511,7 @@ export class SmartNestProPanel extends LitElement {
                 ? html`<button class="round" aria-label=${c.t("open_menu")} @click=${() =>
                     this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }))}>${icon(mdiMenu)}</button>`
                 : html`<svg class="logo" viewBox="0 0 24 24"><path fill="currentColor" d="M12 3 2 11.5h3V21h5.5v-6h3v6H19v-9.5h3z"></path></svg>`}
-              <span>SmartNest</span>
+              <span>${c.config.settings.title || "SmartNest"}</span>
             </div>
             <header class="top">
               ${this.search(c)} ${this.ecoChip(c)}
@@ -830,6 +862,21 @@ export class SmartNestProPanel extends LitElement {
         font-size: 18px;
         font-weight: 300;
         color: var(--sn-text-on-bg-dim);
+      }
+      .greet-name {
+        all: unset;
+        cursor: pointer;
+        font-size: 34px;
+        font-weight: 400;
+        letter-spacing: -0.02em;
+        line-height: 1.05;
+        border-bottom: 1px dashed transparent;
+      }
+      .greet-name:hover {
+        border-bottom-color: currentColor;
+      }
+      .top-phone .greet-name {
+        font-size: 28px;
       }
       .greet strong {
         font-size: 34px;

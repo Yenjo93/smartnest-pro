@@ -28,7 +28,9 @@ const WARM = new THREE.Color("#ff9a5c");
 const AMBER = new THREE.Color("#ffb347");
 
 /** Isometric-ish view: looking down 52° from above, turned 38° around. */
-const ELEVATION = THREE.MathUtils.degToRad(52);
+/** View heights to pick from, in degrees above the floor. */
+export const VIEWS = { top: 88, high: 66, normal: 52, low: 32, eye: 12 } as const;
+export type View = keyof typeof VIEWS;
 export const DEFAULT_AZIMUTH = 38;
 
 /** A soft round glow drawn once and reused for every room's light pool. */
@@ -77,6 +79,8 @@ export class PlanScene {
   private spin = 0;
   /** View direction around the house, in radians. Turned by the rotate buttons and the two-finger twist. */
   private azimuth = THREE.MathUtils.degToRad(DEFAULT_AZIMUTH);
+  private elevation = THREE.MathUtils.degToRad(VIEWS.normal);
+  private tilt = 0;
   /** The current floor's wall height. */
   private wallH = WALL_H;
   private hemi: THREE.HemisphereLight;
@@ -139,9 +143,9 @@ export class PlanScene {
   private placeCamera() {
     const d = 60;
     const off = new THREE.Vector3(
-      Math.sin(this.azimuth) * Math.cos(ELEVATION) * d,
-      Math.sin(ELEVATION) * d,
-      Math.cos(this.azimuth) * Math.cos(ELEVATION) * d,
+      Math.sin(this.azimuth) * Math.cos(this.elevation) * d,
+      Math.sin(this.elevation) * d,
+      Math.cos(this.azimuth) * Math.cos(this.elevation) * d,
     );
     this.camera.position.copy(this.target).add(off);
     this.camera.lookAt(this.target);
@@ -290,13 +294,27 @@ export class PlanScene {
   }
 
   /** Light pools, AC tints and open-door highlights. Cheap: only colours and opacities change. */
+  /** Room highlights for picking (the robot's room picker): "on" glows in the accent colour, "dim" darkens. */
+  private marks = new Map<string, "on" | "dim">();
+  private lastLives: RoomLive[] = [];
+
+  setMarks(marks: Record<string, "on" | "dim">) {
+    this.marks = new Map(Object.entries(marks));
+    this.setEffects(this.lastLives);
+  }
+
   setEffects(lives: RoomLive[]) {
+    this.lastLives = lives;
+    const pick = new THREE.Color(this.palette === "purple" ? "#7d90ff" : "#9ccf6c");
     for (const live of lives) {
       const m = this.rooms.get(live.roomId);
       if (!m) continue;
       const col = m.base.clone();
       if (live.climate === "cool") col.lerp(COOL, 0.32);
       else if (live.climate === "heat") col.lerp(WARM, 0.3);
+      const mark = this.marks.get(live.roomId);
+      if (mark === "on") col.lerp(pick, 0.6);
+      else if (mark === "dim") col.multiplyScalar(0.72);
       m.floor.material.color.copy(col);
       if (live.light) {
         m.pool.visible = true;
@@ -421,6 +439,30 @@ export class PlanScene {
     return THREE.MathUtils.radToDeg(this.azimuth);
   }
 
+  /** Glides the camera up or down to a view height (top-down, eye level…). */
+  setElevation(deg: number, animate = true) {
+    cancelAnimationFrame(this.tilt);
+    const to = THREE.MathUtils.degToRad(deg);
+    if (!animate) {
+      this.elevation = to;
+      this.placeCamera();
+      this.render();
+      return;
+    }
+    const from = this.elevation;
+    const start = performance.now();
+    const step = (now: number) => {
+      const k = Math.min(1, (now - start) / 650);
+      const e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+      this.elevation = from + (to - from) * e;
+      this.placeCamera();
+      this.renderer.render(this.scene, this.camera);
+      this.onRender?.();
+      this.tilt = k < 1 ? requestAnimationFrame(step) : 0;
+    };
+    this.tilt = requestAnimationFrame(step);
+  }
+
   /** Sets the view angle straight away (restoring a saved one). */
   setAzimuth(deg: number) {
     this.azimuth = THREE.MathUtils.degToRad(deg);
@@ -525,6 +567,7 @@ export class PlanScene {
     cancelAnimationFrame(this.anim);
     cancelAnimationFrame(this.tween);
     cancelAnimationFrame(this.spin);
+    cancelAnimationFrame(this.tilt);
     this.build({ id: "", name: "", rooms: [], doors: [] });
     this.glow.dispose();
     this.renderer.dispose();

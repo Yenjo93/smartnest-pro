@@ -15,6 +15,7 @@ import {
   mdiFitToScreenOutline,
   mdiArrowExpand,
   mdiCrosshairsGps,
+  mdiEyeOutline,
   mdiWall,
   mdiRotateLeft,
   mdiRotateRight,
@@ -28,6 +29,9 @@ import { domainOf, isOn, nameOf, toggle } from "../ha";
 import { WALL_H, bounds, innerPoint, roomAt, roomPts } from "./geometry";
 import { placedDevices, roomLive, type RoomLive } from "./live";
 import type { PlanScene } from "./scene";
+// Plain object (no three.js), so the menu can list views before the 3D code has loaded.
+const VIEW_ANGLES = { top: 88, high: 66, normal: 52, low: 32, eye: 12 } as const;
+type ViewKey = keyof typeof VIEW_ANGLES;
 import { openPlanEditor } from "./editor";
 
 const COLORS: [number, number, number][] = [
@@ -61,6 +65,16 @@ export class SnFloorplan extends LitElement {
   @property({ attribute: false }) ctx!: Ctx;
   /** The expanded, near full-screen copy in a popup. */
   @property({ type: Boolean, reflect: true }) big = false;
+  /**
+   * Room picking (the robot's room picker): taps choose rooms instead of switching devices or zooming,
+   * device icons are hidden, and picked rooms glow. Fires "room-pick" with the plan room id.
+   */
+  @property({ type: Boolean, reflect: true }) pick = false;
+  @property({ attribute: false }) picked?: Set<string>;
+  /** Rooms that can be picked; the rest are dimmed. */
+  @property({ attribute: false }) pickable?: Set<string>;
+  /** Show this floor (by id) instead of the floor tabs' choice. */
+  @property() fixedFloor?: string;
   @state() private floorId?: string;
   @state() private ring?: string;
   @state() private timerMenu = false;
@@ -77,6 +91,8 @@ export class SnFloorplan extends LitElement {
   private gesture?: { moved: boolean; pinch?: number; twist?: number; rotate?: boolean; hold?: number; held?: boolean };
   /** When on, tapping a device glides to it and opens its controls instead of switching it. Per screen. */
   @state() private tapZoom = readPref("sn-plan-tapzoom") === "1";
+  @state() private view: ViewKey = ((readPref("sn-plan-view") as ViewKey) in VIEW_ANGLES ? readPref("sn-plan-view") : "normal") as ViewKey;
+  @state() private viewMenu = false;
   private lastHass?: unknown;
   /** The room the camera is zoomed into, if any. */
   private focusRoom?: string;
@@ -85,7 +101,7 @@ export class SnFloorplan extends LitElement {
 
   private get floor(): PlanFloor | undefined {
     const floors = this.ctx.config.plan.floors;
-    return floors.find((f) => f.id === this.floorId) ?? floors[0];
+    return floors.find((f) => f.id === (this.fixedFloor ?? this.floorId)) ?? floors[0];
   }
 
   disconnectedCallback() {
@@ -110,6 +126,7 @@ export class SnFloorplan extends LitElement {
         this.scene = scene;
         const saved = Number(readPref("sn-plan-azimuth"));
         if (Number.isFinite(saved) && readPref("sn-plan-azimuth") !== null) scene.setAzimuth(saved);
+        if (this.view !== "normal") scene.setElevation(VIEW_ANGLES[this.view], false);
         this.palette = this.ctx.palette;
         this.resize.observe(host);
         const r = host.getBoundingClientRect();
@@ -145,9 +162,16 @@ export class SnFloorplan extends LitElement {
       scene.build(floor);
     }
     const lives = this.lives(floor);
-    const ek = JSON.stringify(lives);
+    const marks: Record<string, "on" | "dim"> = {};
+    if (this.pick)
+      for (const r of floor.rooms) {
+        if (this.picked?.has(r.id)) marks[r.id] = "on";
+        else if (this.pickable && !this.pickable.has(r.id)) marks[r.id] = "dim";
+      }
+    const ek = JSON.stringify([lives, marks]);
     if (ek !== this.effectsKey) {
       this.effectsKey = ek;
+      scene.setMarks(marks);
       scene.setEffects(lives);
     }
     if (this.lastHass !== this.ctx.hass) {
@@ -170,7 +194,7 @@ export class SnFloorplan extends LitElement {
       // Right mouse button or Shift + drag turns the view; on touch it's a two-finger twist.
       this.gesture = { moved: false, rotate: e.button === 2 || e.shiftKey };
       // Holding a linked piece of furniture opens its ring, like holding a device icon.
-      const hit = !this.ctx.editing && this.scene ? this.pick(e) : undefined;
+      const hit = !this.ctx.editing && !this.pick && this.scene ? this.pickAt(e) : undefined;
       if (hit?.entity) {
         const g = this.gesture;
         g.hold = window.setTimeout(() => {
@@ -217,7 +241,7 @@ export class SnFloorplan extends LitElement {
     else this.scene.pan(dx, dy);
   };
 
-  private pick(e: PointerEvent) {
+  private pickAt(e: PointerEvent) {
     const host = this.renderRoot.querySelector(".canvas")!.getBoundingClientRect();
     return this.scene!.pickFurniture(e.clientX - host.left, e.clientY - host.top);
   }
@@ -233,8 +257,16 @@ export class SnFloorplan extends LitElement {
       this.ring = undefined;
       return;
     }
+    if (this.pick) {
+      const host = this.renderRoot.querySelector(".canvas")!.getBoundingClientRect();
+      const p = this.scene.unproject(e.clientX - host.left, e.clientY - host.top);
+      const room = roomAt(this.floor, p.x, p.y);
+      if (room && (!this.pickable || this.pickable.has(room.id)))
+        this.dispatchEvent(new CustomEvent("room-pick", { detail: room.id, bubbles: true, composed: true }));
+      return;
+    }
     // A linked piece of furniture works its device: tap the AC to switch it, the lamp to light it.
-    const hit = !this.ctx.editing ? this.pick(e) : undefined;
+    const hit = !this.ctx.editing ? this.pickAt(e) : undefined;
     if (hit?.entity && this.ctx.hass.states[hit.entity]) {
       if (this.tapZoom) this.focusDevice(hit.entity, this.scene.piecePos(hit.id));
       else toggle(this.ctx.hass, hit.entity);
@@ -430,7 +462,7 @@ export class SnFloorplan extends LitElement {
     const scene = this.scene;
     const linked = new Set((floor.furniture ?? []).map((f) => f.entity).filter(Boolean));
     // Devices that have a piece of furniture are controlled through it: no floating icon on top.
-    const devices = scene ? placedDevices(hass, config, floor).filter((d) => !linked.has(d.id)) : [];
+    const devices = scene && !this.pick ? placedDevices(hass, config, floor).filter((d) => !linked.has(d.id)) : [];
     const lives = new Map(this.lives(floor).map((l) => [l.roomId, l]));
     const b = bounds(floor);
     const view = scene?.viewRect();
@@ -445,7 +477,7 @@ export class SnFloorplan extends LitElement {
         ? html`<div class="overlay">
             ${floor.rooms.map((r) => {
               const live = lives.get(r.id);
-              if (!r.area) return nothing;
+              if (!r.area || (config.pages.rooms?.hidden ?? []).includes(r.area)) return nothing;
               // Rectangles keep the label in their top strip (icons stay clear of it); shapes use an inner point.
               const lp = r.pts ? innerPoint(r) : { x: r.x + r.w / 2, y: r.y + 0.35 };
               const p = scene.project(lp.x, lp.y, 0.02);
@@ -457,7 +489,7 @@ export class SnFloorplan extends LitElement {
             })}
             ${floor.rooms.map((r) => {
               const live = lives.get(r.id);
-              if (!live?.occupied) return nothing;
+              if (!live?.occupied || this.pick) return nothing;
               const c = innerPoint(r);
               const p = scene.project(c.x, c.y, 0.02);
               return html`<div class="presence" style="left:${p.left}px; top:${p.top}px">
@@ -504,7 +536,7 @@ export class SnFloorplan extends LitElement {
           </div>`
         : nothing}
 
-      ${floors.length > 1
+      ${floors.length > 1 && !this.fixedFloor
         ? html`<div class="ui floors ${this.ctx.phone ? "top" : ""}">
             ${floors.map(
               (f) => html`<button class=${f.id === floor.id ? "on" : ""} @click=${() => ((this.floorId = f.id), (this.ring = undefined))}>${f.name}</button>`,
@@ -513,7 +545,7 @@ export class SnFloorplan extends LitElement {
         : nothing}
 
       <div class="ui tools">
-        ${editing
+        ${editing && !this.pick
           ? html`<div class="walls" title=${t("wall_height")}>
                 <button aria-label="−" @click=${() => this.bumpWalls(floor.id, -0.1)}>−</button>
                 <span>${icon(mdiWall, 16)}${(floor.wallHeight ?? WALL_H).toFixed(2)} m</span>
@@ -521,7 +553,7 @@ export class SnFloorplan extends LitElement {
               </div>
               <button class="tool wide" @click=${() => openPlanEditor(this.ctx)}>${icon(mdiPencilRuler, 18)}${t("edit_plan")}</button>`
           : nothing}
-        <button
+        ${this.pick ? nothing : html`<button
           class="tool ${this.tapZoom ? "on" : ""}"
           aria-pressed=${this.tapZoom}
           aria-label=${t("tap_zoom")}
@@ -533,13 +565,35 @@ export class SnFloorplan extends LitElement {
           }}
         >
           ${icon(mdiCrosshairsGps, 20)}
-        </button>
+        </button>`}
+        <div class="view-wrap">
+          <button class="tool ${this.viewMenu ? "on" : ""}" aria-label=${t("view")} title=${t("view")} @click=${() => (this.viewMenu = !this.viewMenu)}>
+            ${icon(mdiEyeOutline, 20)}
+          </button>
+          ${this.viewMenu
+            ? html`<div class="view-menu">
+                ${(Object.keys(VIEW_ANGLES) as ViewKey[]).map(
+                  (k) => html`<button
+                    class=${k === this.view ? "on" : ""}
+                    @click=${() => {
+                      this.view = k;
+                      this.viewMenu = false;
+                      writePref("sn-plan-view", k);
+                      this.scene?.setElevation(VIEW_ANGLES[k]);
+                    }}
+                  >
+                    <span class="angle" style="--a:${VIEW_ANGLES[k]}deg"></span>${t(`view_${k}` as const)}
+                  </button>`,
+                )}
+              </div>`
+            : nothing}
+        </div>
         <button class="tool" aria-label=${t("rotate_left")} title=${t("rotate_left")} @click=${() => this.rotate(-45)}>${icon(mdiRotateLeft, 20)}</button>
         <button class="tool" aria-label=${t("rotate_right")} title=${t("rotate_right")} @click=${() => this.rotate(45)}>${icon(mdiRotateRight, 20)}</button>
         <button class="tool" aria-label="zoom in" @click=${() => scene?.zoomBy(1.25)}>${icon(mdiMagnifyPlusOutline, 20)}</button>
         <button class="tool" aria-label="zoom out" @click=${() => scene?.zoomBy(0.8)}>${icon(mdiMagnifyMinusOutline, 20)}</button>
         <button class="tool" aria-label="fit" @click=${() => scene?.reset(floor)}>${icon(mdiFitToScreenOutline, 20)}</button>
-        ${this.big
+        ${this.big || this.pick
           ? nothing
           : html`<button
               class="tool"
@@ -557,7 +611,7 @@ export class SnFloorplan extends LitElement {
             </button>`}
       </div>
 
-      ${view && !this.ctx.phone
+      ${view && !this.ctx.phone && !this.pick
         ? html`<svg class="ui mini" viewBox="${b.x - 0.5} ${b.y - 0.5} ${b.w + 1} ${b.h + 1}" preserveAspectRatio="xMidYMid meet">
             ${floor.rooms.map((r) => svg`<polygon points=${roomPts(r).map((q) => `${q.x},${q.y}`).join(" ")} class=${r.area && r.area === room ? "sel" : ""}></polygon>`)}
             <rect class="view" x=${view.x} y=${view.y} width=${view.w} height=${view.h}></rect>
@@ -576,6 +630,20 @@ export class SnFloorplan extends LitElement {
       }
       :host([big]) {
         height: min(74vh, 760px);
+      }
+      :host([pick]) {
+        height: 300px;
+        border: 1px solid var(--sn-glass-border);
+        background: rgba(0, 0, 0, 0.1);
+      }
+      :host([pick]) .tools {
+        bottom: 8px;
+        inset-inline-end: 8px;
+        gap: 6px;
+      }
+      :host([pick]) .tool {
+        min-width: 36px;
+        height: 36px;
       }
       :host {
         overflow: hidden;
@@ -907,6 +975,52 @@ export class SnFloorplan extends LitElement {
         color: var(--sn-text-on-bg);
         cursor: pointer;
         font-size: 13px;
+      }
+      .view-wrap {
+        position: relative;
+      }
+      .view-menu {
+        position: absolute;
+        bottom: 50px;
+        inset-inline-end: 0;
+        display: grid;
+        gap: 4px;
+        min-width: 170px;
+        padding: 6px;
+        border-radius: 18px;
+        background: var(--sn-glass-strong);
+        border: 1px solid var(--sn-glass-border);
+        backdrop-filter: var(--sn-blur);
+        -webkit-backdrop-filter: var(--sn-blur);
+        box-shadow: var(--sn-shadow);
+        animation: grow 0.2s ease;
+        transform-origin: bottom right;
+      }
+      .view-menu button {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        height: 40px;
+        padding: 0 12px;
+        border-radius: 12px;
+        border: 0;
+        background: none;
+        color: var(--sn-text);
+        font-size: 14px;
+        text-align: start;
+        cursor: pointer;
+      }
+      .view-menu button.on {
+        background: var(--sn-accent);
+        color: #1d1b30;
+      }
+      /* A little line tilted at the view's angle, as a hint of what it looks like. */
+      .angle {
+        width: 18px;
+        height: 2px;
+        border-radius: 1px;
+        background: currentColor;
+        transform: rotate(calc(-1 * var(--a)));
       }
       .walls {
         display: inline-flex;

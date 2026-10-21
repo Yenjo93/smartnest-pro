@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from "lit";
 import { customElement, property } from "lit/decorators.js";
-import { mdiBattery, mdiHomeImportOutline, mdiMapMarkerQuestionOutline, mdiPause, mdiPlay, mdiRobotMower, mdiRobotVacuum } from "@mdi/js";
+import { mdiMapOutline, mdiBattery, mdiHomeImportOutline, mdiMapMarkerQuestionOutline, mdiPause, mdiPlay, mdiRobotMower, mdiRobotVacuum } from "@mdi/js";
 import type { Ctx } from "../ctx";
 import { shared } from "../styles";
 import { icon } from "../ui/icon";
@@ -45,7 +45,9 @@ export class SnRobotCard extends LitElement {
               <span class="bar"><span style="width:${battery}%"></span></span></span>`
           : nothing}
       </div>
-      ${mapUrl
+      ${mapUrl && this.ctx.config.plan.floors.some((f) => f.rooms.length) && !mower
+        ? html`<button class="map-link" @click=${() => this.ctx.openEntity(map!)}>${icon(mdiMapOutline, 16)}${t("robot_map")}</button>`
+        : mapUrl
         ? html`<button class="map" @click=${() => this.ctx.openEntity(map!)}><img src=${mapUrl} alt=${t("map")} loading="lazy" /></button>`
         : nothing}
       ${!mower ? html`<sn-robot-rooms .ctx=${this.ctx} .entity=${id}></sn-robot-rooms>` : nothing}
@@ -145,6 +147,20 @@ export class SnRobotCard extends LitElement {
       .batt .bar {
         grid-column: 1 / -1;
         width: 110px;
+      }
+      .map-link {
+        justify-self: start;
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        height: 32px;
+        padding: 0 12px;
+        border-radius: 999px;
+        border: 1px solid var(--sn-glass-border);
+        background: rgba(255, 255, 255, 0.06);
+        color: var(--sn-text-dim);
+        font-size: 12px;
+        cursor: pointer;
       }
       .map {
         all: unset;

@@ -1,1 +1,1 @@
-import{_}from"./chunks/loader-CNK6QNRK.js";_(()=>import("./chunks/app-D-JcycXs.js").then(_=>_.f),[]);
+import{_}from"./chunks/loader-CNK6QNRK.js";_(()=>import("./chunks/app-B9z5pZHX.js").then(_=>_.f),[]);
