@@ -15,6 +15,7 @@ import {
   mdiFitToScreenOutline,
   mdiArrowExpand,
   mdiCrosshairsGps,
+  mdiWall,
   mdiRotateLeft,
   mdiRotateRight,
 } from "@mdi/js";
@@ -24,7 +25,7 @@ import { shared } from "../styles";
 import { entityIcon, icon } from "../ui/icon";
 import { noMenu, onHold, hasLevel } from "../ui/hold";
 import { domainOf, isOn, nameOf, toggle } from "../ha";
-import { bounds, innerPoint, roomAt, roomPts } from "./geometry";
+import { WALL_H, bounds, innerPoint, roomAt, roomPts } from "./geometry";
 import { placedDevices, roomLive, type RoomLive } from "./live";
 import type { PlanScene } from "./scene";
 import { openPlanEditor } from "./editor";
@@ -276,6 +277,14 @@ export class SnFloorplan extends LitElement {
     this.openRing(id);
   }
 
+  /** Wall height straight from the plan in edit mode, so it's one tap away rather than at the bottom of the editor. */
+  private bumpWalls(floorId: string, delta: number) {
+    this.ctx.update((d) => {
+      const f = d.plan.floors.find((x) => x.id === floorId);
+      if (f) f.wallHeight = Math.min(3, Math.max(0.5, Math.round(((f.wallHeight ?? WALL_H) + delta) * 100) / 100));
+    });
+  }
+
   /** Back to the whole floor (tapping outside the rooms, the same room again, or closing the room panel). */
   unfocus() {
     this.focusRoom = undefined;
@@ -504,7 +513,14 @@ export class SnFloorplan extends LitElement {
         : nothing}
 
       <div class="ui tools">
-        ${editing ? html`<button class="tool wide" @click=${() => openPlanEditor(this.ctx)}>${icon(mdiPencilRuler, 18)}${t("edit_plan")}</button>` : nothing}
+        ${editing
+          ? html`<div class="walls" title=${t("wall_height")}>
+                <button aria-label="−" @click=${() => this.bumpWalls(floor.id, -0.1)}>−</button>
+                <span>${icon(mdiWall, 16)}${(floor.wallHeight ?? WALL_H).toFixed(2)} m</span>
+                <button aria-label="+" @click=${() => this.bumpWalls(floor.id, 0.1)}>+</button>
+              </div>
+              <button class="tool wide" @click=${() => openPlanEditor(this.ctx)}>${icon(mdiPencilRuler, 18)}${t("edit_plan")}</button>`
+          : nothing}
         <button
           class="tool ${this.tapZoom ? "on" : ""}"
           aria-pressed=${this.tapZoom}
@@ -836,10 +852,10 @@ export class SnFloorplan extends LitElement {
         position: absolute;
         z-index: 4;
       }
+      /* Beside the minimap, leaving the bottom-right for the (longer, in edit mode) toolbar. */
       .floors {
         bottom: 12px;
-        left: 50%;
-        transform: translateX(-50%);
+        inset-inline-start: 136px;
         display: flex;
         gap: 6px;
         padding: 5px;
@@ -891,6 +907,37 @@ export class SnFloorplan extends LitElement {
         color: var(--sn-text-on-bg);
         cursor: pointer;
         font-size: 13px;
+      }
+      .walls {
+        display: inline-flex;
+        align-items: center;
+        gap: 2px;
+        height: 40px;
+        padding: 0 4px;
+        border-radius: 999px;
+        border: 1px solid var(--sn-glass-border);
+        background: var(--sn-glass);
+        backdrop-filter: var(--sn-blur);
+        -webkit-backdrop-filter: var(--sn-blur);
+        color: var(--sn-text-on-bg);
+        font-size: 13px;
+      }
+      .walls span {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 0 6px;
+        white-space: nowrap;
+      }
+      .walls button {
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        border: 0;
+        background: rgba(255, 255, 255, 0.12);
+        color: inherit;
+        font-size: 18px;
+        cursor: pointer;
       }
       .tool.on {
         background: var(--sn-accent);
