@@ -94,7 +94,7 @@ export class SnPlanEditor extends LitElement {
    * Slider values while a slider is being dragged. The 3D view rebuilds the whole floor for these, which is
    * too heavy to do on every pixel on a tablet, so the layout only changes when the slider is let go.
    */
-  @state() private live: { wall?: number; z?: number; scale?: number } = {};
+  @state() private live: { wall?: number; z?: number; scale?: number; stretch?: number } = {};
 
   private get floor(): PlanFloor | undefined {
     const floors = this.ctx.config.plan.floors;
@@ -397,6 +397,11 @@ export class SnPlanEditor extends LitElement {
       const setScale = (v: number) => this.setFurn(sel.id, (f) => (f.scale = clampS(v)));
       const bumpZ = (dv: number) => this.setFurn(sel.id, (f) => (f.z = clampZ(pieceZ(f.type, f.z) + dv)));
       const bumpScale = (dv: number) => this.setFurn(sel.id, (f) => (f.scale = clampS((f.scale ?? 1) + dv)));
+      const stretch = this.live.stretch ?? sel.stretch ?? 1;
+      const clampL = (v: number) => Math.min(4, Math.max(0.25, Math.round(v * 100) / 100));
+      const setLen = (v: number) => this.setFurn(sel.id, (f) => (f.stretch = clampL(v)));
+      const bumpLen = (dv: number) => this.setFurn(sel.id, (f) => (f.stretch = clampL((f.stretch ?? 1) + dv)));
+      const width = (it?.w ?? 0.5) * scale * stretch;
       return html`<div class="panel">
         <span class="fname">${itemName(sel.type, lang)}</span>
         <div class="rot">
@@ -423,7 +428,8 @@ export class SnPlanEditor extends LitElement {
         <div class="sliders">
           ${this.stepper(ceiling ? t("hang_down") : t("height_above_floor"), `${z.toFixed(2)} m`, z, 0, 2.5, 0.01, 0.05, "z", setZ, bumpZ)}
           ${this.stepper(t("size"), `${Math.round(scale * 100)}%`, scale, 0.4, 2.5, 0.05, 0.1, "scale", setScale, bumpScale)}
-          <button class="reset" @click=${() => this.setFurn(sel.id, (f) => ((f.z = undefined), (f.scale = undefined)))}>${t("reset")}</button>
+          ${this.stepper(t("length"), `${width.toFixed(2)} m`, stretch, 0.25, 4, 0.05, 0.1, "stretch", setLen, bumpLen)}
+          <button class="reset" @click=${() => this.setFurn(sel.id, (f) => ((f.z = undefined), (f.scale = undefined), (f.stretch = undefined)))}>${t("reset")}</button>
         </div>
       </div>`;
     }
@@ -497,7 +503,7 @@ export class SnPlanEditor extends LitElement {
     max: number,
     step: number,
     nudge: number,
-    key: "wall" | "z" | "scale",
+    key: "wall" | "z" | "scale" | "stretch",
     commit: (v: number) => void,
     /** Adds to the saved value itself, so quick taps each count even before the screen catches up. */
     bump: (delta: number) => void,
@@ -691,7 +697,7 @@ export class SnPlanEditor extends LitElement {
           const w = it?.w ?? 0.5;
           const dd = it?.d ?? 0.5;
           const s = (Math.min(w, dd) * 0.7) / 24;
-          return svg`<g data-furn=${f.id} class="furn ${f.id === this.selFurn ? "sel" : ""} ${f.entity ? "linked" : ""}" transform="translate(${f.x} ${f.y}) rotate(${f.rot || 0}) scale(${f.scale ?? 1})">
+          return svg`<g data-furn=${f.id} class="furn ${f.id === this.selFurn ? "sel" : ""} ${f.entity ? "linked" : ""}" transform="translate(${f.x} ${f.y}) rotate(${f.rot || 0}) scale(${(f.scale ?? 1) * (f.stretch ?? 1)} ${f.scale ?? 1})">
             <rect x=${-w / 2} y=${-dd / 2} width=${w} height=${dd} rx="0.05"></rect>
             ${it ? svg`<path d=${it.icon} transform="translate(${-12 * s} ${-12 * s}) scale(${s})"></path>` : nothing}
           </g>`;

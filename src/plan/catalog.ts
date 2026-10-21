@@ -3,7 +3,7 @@
 import * as I from "@mdi/js";
 import type { Lang } from "../types";
 
-export type Category = "smart" | "living" | "bedroom" | "kitchen" | "bath" | "office" | "outdoor";
+export type Category = "smart" | "living" | "bedroom" | "kitchen" | "bath" | "office" | "outdoor" | "structure";
 
 export interface CatalogItem {
   type: string;
@@ -109,8 +109,8 @@ export const CATALOG: CatalogItem[] = [
   it("plant_tall", "living", "Tall plant", "نبتة طويلة", I.mdiFlowerTulipOutline, 0.55, 0.55),
   it("cactus", "living", "Cactus", "صبّار", I.mdiCactus, 0.3, 0.3),
   it("candle", "living", "Candles", "شموع", I.mdiCandle, 0.25, 0.25, { domains: L, z: 0.3 }),
-  it("pillar", "living", "Column", "عامود", I.mdiPillar, 0.4, 0.4),
-  it("stairs", "living", "Stairs", "درج", I.mdiStairs, 1.0, 2.6),
+  it("pillar", "structure", "Column", "عامود", I.mdiPillar, 0.4, 0.4),
+  it("stairs", "structure", "Stairs", "درج", I.mdiStairs, 1.0, 2.6),
 
   // ---------- Bedroom ----------
   it("bed_king", "bedroom", "King bed", "تخت كبير", I.mdiBedKingOutline, 2.0, 2.2),
@@ -186,6 +186,79 @@ export const CATALOG: CatalogItem[] = [
   it("fence", "outdoor", "Fence", "سور", I.mdiFence, 2.0, 0.08),
   it("car", "outdoor", "Car", "سيارة", I.mdiCar, 1.9, 4.4, { domains: ["device_tracker", "binary_sensor", "sensor"] }),
   it("bicycle", "outdoor", "Bicycle", "بسكليت", I.mdiBicycle, 0.6, 1.7),
+
+  // ---------- More: kitchen ----------
+  it("counter_plain", "kitchen", "Counter (plain)", "مطبخ فاضي", I.mdiCountertopOutline, 2.4, 0.62),
+  it("base_cabinet", "kitchen", "Base cabinet", "خزانة سفلية", I.mdiDresserOutline, 0.6, 0.62),
+  it("upper_cabinet", "kitchen", "Upper cabinet", "خزانة علوية", I.mdiDresserOutline, 0.8, 0.35, { z: 0.65 }),
+  it("range_hood", "kitchen", "Range hood", "شفاط", I.mdiFan, 0.9, 0.5, { domains: [...L, "fan"], z: 0.72 }),
+  it("island_seats", "kitchen", "Island with stools", "جزيرة مع كراسي", I.mdiCountertop, 1.7, 1.4),
+  it("breakfast_table", "kitchen", "Breakfast table (2)", "طاولة فطور", I.mdiTableChair, 0.8, 1.5),
+  it("bar_table", "kitchen", "Bar table", "طاولة بار", I.mdiTableFurniture, 0.7, 0.7),
+  it("dining_bench", "kitchen", "Dining bench", "مقعد سفرة", I.mdiBench, 1.4, 0.4),
+  it("water_dispenser", "kitchen", "Water dispenser", "براد مي", I.mdiWater ?? I.mdiCup, 0.35, 0.35, { domains: SW }),
+  it("fruit_bowl", "kitchen", "Fruit bowl", "صحن فواكه", I.mdiFoodApple ?? I.mdiFoodVariant, 0.3, 0.3, { z: 0.62 }),
+
+  // ---------- More: living ----------
+  it("recliner", "living", "Recliner", "كرسي استرخاء", I.mdiSofaSingle, 0.9, 1.3),
+  it("chaise", "living", "Chaise longue", "شيزلونج داخلي", I.mdiSeat, 0.7, 1.6),
+  it("ottoman_round", "living", "Round ottoman", "بوف مدور", I.mdiSeatOutline, 0.6, 0.6),
+  it("floor_cushion", "living", "Floor cushion", "مخدة أرضية", I.mdiSquareRounded ?? I.mdiSeatOutline, 0.6, 0.6),
+  it("bookcase_tall", "living", "Tall bookcase", "مكتبة طويلة", I.mdiBookshelf, 0.9, 0.35),
+  it("vitrine", "living", "Glass cabinet", "فترينة", I.mdiDresserOutline, 0.9, 0.45, { domains: L }),
+  it("room_divider", "living", "Room divider", "فاصل", I.mdiDivision ?? I.mdiViewParallel ?? I.mdiWall, 1.4, 0.2),
+  it("floor_vase", "living", "Floor vase", "مزهرية", I.mdiFlowerOutline, 0.3, 0.3),
+  it("bar_cart", "living", "Bar cart", "عربة بار", I.mdiGlassWine, 0.7, 0.45),
+  it("massage_chair", "living", "Massage chair", "كرسي مساج", I.mdiSofaSingle, 0.8, 1.2),
+  it("rocking_chair", "living", "Rocking chair", "كرسي هزاز", I.mdiChairRolling, 0.7, 0.9),
+  it("mirror_round", "living", "Round mirror", "مراية مدورة", I.mdiMirror, 0.6, 0.04, { z: 0.45 }),
+  it("rug_runner", "living", "Runner rug", "سجادة طويلة", I.mdiRug, 2.5, 0.8),
+  it("record_player", "living", "Record player", "جرامافون", I.mdiRecordPlayer ?? I.mdiAlbum, 0.45, 0.35, { domains: MEDIA, z: 0.37 }),
+  it("plant_hanging", "living", "Hanging plant", "نبتة معلّقة", I.mdiFlowerOutline, 0.35, 0.35, { mount: "ceiling" }),
+
+  // ---------- More: bedroom ----------
+  it("wardrobe_sliding", "bedroom", "Sliding wardrobe", "خزانة سحّاب", I.mdiWardrobe, 2.0, 0.65),
+  it("chest", "bedroom", "Chest / trunk", "صندوق", I.mdiTreasureChest ?? I.mdiDresserOutline, 0.9, 0.45),
+  it("toy_box", "bedroom", "Toy box", "صندوق ألعاب", I.mdiToyBrickOutline ?? I.mdiBabyCarriage, 0.7, 0.4),
+  it("changing_table", "bedroom", "Changing table", "طاولة غيار", I.mdiBabyCarriage, 0.9, 0.55),
+  it("kids_bed", "bedroom", "Kids bed", "تخت ولاد", I.mdiBedSingleOutline, 0.9, 1.7),
+  it("nightstand_round", "bedroom", "Round side table", "كومودينا مدورة", I.mdiTableFurniture, 0.45, 0.45),
+
+  // ---------- More: bath ----------
+  it("washer_dryer", "bath", "Washer-dryer stack", "غسالة ونشافة", I.mdiWashingMachine, 0.6, 0.62, { domains: [...SW, "sensor", "binary_sensor"] }),
+  it("bidet", "bath", "Bidet", "شطّاف", I.mdiToilet, 0.38, 0.55),
+  it("bath_cabinet", "bath", "Tall bath cabinet", "خزانة حمام", I.mdiDresserOutline, 0.4, 0.35),
+
+  // ---------- More: office ----------
+  it("standing_desk", "office", "Standing desk", "مكتب واقف", I.mdiDesk, 1.4, 0.7),
+  it("whiteboard", "office", "Whiteboard", "لوح أبيض", I.mdiDraw ?? I.mdiImageFrame, 1.2, 0.05, { z: 0.35 }),
+  it("meeting_table", "office", "Meeting table", "طاولة اجتماعات", I.mdiTableChair, 2.2, 2.4),
+  it("office_cabinet", "office", "Office cabinet", "خزانة مكتب", I.mdiFileCabinet, 0.8, 0.45),
+  it("bookshelf_ladder", "office", "Ladder shelf", "رف سلّم", I.mdiBookshelf, 0.8, 0.45),
+
+  // ---------- More: outdoor ----------
+  it("garden_bench", "outdoor", "Garden bench", "مقعد حديقة", I.mdiBench, 1.4, 0.55),
+  it("fire_pit", "outdoor", "Fire pit", "موقد نار", I.mdiFire, 1.0, 1.0, { domains: [...SW, ...L] }),
+  it("outdoor_heater", "outdoor", "Patio heater", "دفاية برّا", I.mdiHeatingCoil, 0.5, 0.5, { domains: SW }),
+  it("lamp_post", "outdoor", "Lamp post", "عامود ضو", I.mdiPostLamp ?? I.mdiLightbulbOutline, 0.3, 0.3, { domains: L }),
+  it("wall_light_out", "outdoor", "Outdoor wall light", "ضو حيط برّا", I.mdiWallSconce ?? I.mdiLightbulbOutline, 0.15, 0.12, { domains: L, z: 0.6 }),
+  it("gate", "outdoor", "Gate", "بوابة", I.mdiGate, 2.2, 0.15, { domains: ["cover", "switch", "lock"] }),
+  it("trampoline", "outdoor", "Trampoline", "ترامبولين", I.mdiCircleOutline, 2.4, 2.4),
+  it("garden_swing", "outdoor", "Garden swing", "مرجوحة", I.mdiSeat, 1.9, 1.2),
+  it("kids_slide", "outdoor", "Kids slide", "زحليطة", I.mdiSlide ?? I.mdiStairs, 0.6, 2.2),
+  it("sunbed_double", "outdoor", "Double sunbed", "سرير شمس", I.mdiBedDoubleOutline, 1.6, 2.0),
+  it("planter", "outdoor", "Planter box", "حوض زرع", I.mdiFlowerOutline, 1.0, 0.4),
+  it("shed", "outdoor", "Garden shed", "مخزن حديقة", I.mdiHomeOutline, 2.0, 1.6),
+  it("dog_house", "outdoor", "Dog house", "بيت كلب", I.mdiDogSide, 0.8, 1.0),
+  it("mailbox", "outdoor", "Mailbox", "صندوق بريد", I.mdiMailboxOutline ?? I.mdiEmailOutline, 0.3, 0.45),
+  it("motorcycle", "outdoor", "Motorcycle", "موتور", I.mdiMotorbike, 0.6, 2.0),
+
+  // ---------- Structure ----------
+  it("spiral_stairs", "structure", "Spiral stairs", "درج حلزوني", I.mdiStairs, 1.6, 1.6),
+  it("railing", "structure", "Railing", "درابزين", I.mdiFence, 2.0, 0.06),
+  it("glass_wall", "structure", "Glass partition", "حيط زجاج", I.mdiWindowClosedVariant, 2.0, 0.05),
+  it("column_square", "structure", "Square column", "عامود مربع", I.mdiSquareOutline, 0.4, 0.4),
+  it("built_in_shelves", "structure", "Built-in shelves", "رفوف بالحيط", I.mdiBookshelf, 1.6, 0.35),
 ];
 
 export const CATEGORIES: { key: Category; name: { en: string; ar: string } }[] = [
@@ -196,6 +269,7 @@ export const CATEGORIES: { key: Category; name: { en: string; ar: string } }[] =
   { key: "bath", name: { en: "Bath", ar: "حمام" } },
   { key: "office", name: { en: "Office", ar: "مكتب" } },
   { key: "outdoor", name: { en: "Outdoor", ar: "برّا" } },
+  { key: "structure", name: { en: "Structure", ar: "بناء" } },
 ];
 
 export const item = (type: string) => CATALOG.find((c) => c.type === type);

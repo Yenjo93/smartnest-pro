@@ -173,7 +173,9 @@ export class PlanScene {
       const z = pieceZ(f.type, f.z);
       const y = item(f.type)?.mount === "ceiling" ? this.wallH - z : z;
       piece.group.position.set(f.x, y, f.y);
-      piece.group.scale.setScalar(f.scale && f.scale > 0 ? f.scale : 1);
+      const sc = f.scale && f.scale > 0 ? f.scale : 1;
+      const st = f.stretch && f.stretch > 0 ? f.stretch : 1;
+      piece.group.scale.set(sc * st, sc, sc);
       piece.group.rotation.y = -THREE.MathUtils.degToRad(f.rot || 0);
       piece.group.userData.furnitureId = f.id;
       this.furnitureRoot.add(piece.group);
