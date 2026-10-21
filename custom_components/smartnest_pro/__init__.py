@@ -78,6 +78,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Remove the panel; the saved layout stays on disk."""
     frontend.async_remove_panel(hass, PANEL_URL_PATH)
+    for cancel, _ends in hass.data.pop(f"{DOMAIN}_timers", {}).values():
+        cancel()
     hass.data.pop(DOMAIN, None)
     return True
 

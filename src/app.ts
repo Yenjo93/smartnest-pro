@@ -22,7 +22,7 @@ import {
   mdiDotsHorizontal,
 } from "@mdi/js";
 import type { Ctx, SheetSpec } from "./ctx";
-import type { Hass, PanelInfo, ProConfig } from "./types";
+import type { Hass, Palette, PanelInfo, ProConfig } from "./types";
 import { clone, normalize } from "./config";
 import { resolveLang, translator } from "./i18n";
 import { areas, nameOf, powerKw, roomInfo } from "./ha";
@@ -32,12 +32,12 @@ import { icon } from "./ui/icon";
 import { entitySheet } from "./popups/entity-popup";
 import "./ui/sheet";
 import "./ui/level";
-import "./cards/house-hero";
+import "./plan/floorplan";
 import "./cards/energy-card";
 import "./cards/climate-card";
 import "./cards/devices-card";
 import "./cards/room-panel";
-import "./cards/scenes-card";
+import "./cards/scene-bar";
 import "./pages/rooms-page";
 import "./pages/climate-page";
 import "./pages/lights-page";
@@ -69,6 +69,8 @@ export class SmartNestProPanel extends LitElement {
   @state() private room?: string;
   @state() private sheet?: SheetSpec;
   @state() private toastMsg?: string;
+  /** The room panel floating over the Home plan. */
+  @state() private panelOpen = false;
   @state() private width = 1200;
   @state() private query = "";
   @state() private loadError?: string;
@@ -129,13 +131,16 @@ export class SmartNestProPanel extends LitElement {
     const config = this.live!;
     const lang = resolveLang(config.settings.language, this.hass!.language ?? "en");
     const room = this.room && this.hass!.areas?.[this.room] ? this.room : this.defaultRoom(config);
+    const theme = config.settings.theme;
+    const palette: Palette = theme === "purple" ? "purple" : theme === "dark" || (theme === "auto" && !!this.hass!.themes?.darkMode) ? "dark" : "light";
     const ctx: Ctx = {
       hass: this.hass!,
       config,
       t: translator(lang),
       lang,
       rtl: lang === "ar",
-      dark: config.settings.theme === "dark" || (config.settings.theme === "auto" && !!this.hass!.themes?.darkMode),
+      dark: palette !== "light",
+      palette,
       phone: this.phone,
       isAdmin: !!this.hass!.user?.is_admin,
       editing: !!this.draft,
@@ -144,6 +149,7 @@ export class SmartNestProPanel extends LitElement {
       selectRoom: (id) => {
         this.room = id;
         if (this.phone) this.openRoomSheet(id);
+        else this.panelOpen = true;
       },
       update: (fn) => {
         const next = clone(this.draft ?? this.config!);
@@ -354,27 +360,35 @@ export class SmartNestProPanel extends LitElement {
     </nav>`;
   }
 
+  /** Home on a tablet or desktop: the floor plan fills the page, with the scenes bar on top and the room panel
+   * sliding in from the side when a room is tapped. */
   private homeWide(c: Ctx) {
-    return html`<div class="home">
-      <div class="col-left">
+    return html`<div class="home-plan">
+      <sn-floorplan class="plan" .ctx=${c} @unfocus=${() => (this.panelOpen = false)}></sn-floorplan>
+      <div class="plan-top">
         ${this.greeting(c)}
-        <sn-energy-card .ctx=${c}></sn-energy-card>
+        <sn-scene-bar .ctx=${c}></sn-scene-bar>
       </div>
-      <sn-house-hero class="hero" .ctx=${c}></sn-house-hero>
-      <div class="col-side">
-        <sn-room-panel .ctx=${c} .area=${c.room}></sn-room-panel>
-        <sn-scenes-card .ctx=${c}></sn-scenes-card>
-      </div>
-      <sn-climate-card class="climate" .ctx=${c}></sn-climate-card>
-      <sn-devices-card class="devices" .ctx=${c}></sn-devices-card>
+      ${this.panelOpen && c.room
+        ? html`<aside class="room-float">
+            <button class="round close" aria-label=${c.t("cancel")} @click=${this.closePanel}>${icon(mdiClose, 18)}</button>
+            <sn-room-panel .ctx=${c} .area=${c.room}></sn-room-panel>
+          </aside>`
+        : nothing}
     </div>`;
   }
+
+  private closePanel = () => {
+    this.panelOpen = false;
+    (this.renderRoot.querySelector("sn-floorplan") as (HTMLElement & { unfocus(): void }) | null)?.unfocus();
+  };
 
   private homePhone(c: Ctx) {
     const hiddenRooms = c.config.pages.rooms?.hidden ?? [];
     const list = areas(c.hass).filter((a) => !hiddenRooms.includes(a.area_id));
     return html`<div class="home-phone">
-      <sn-house-hero class="hero" .ctx=${c}></sn-house-hero>
+      <sn-scene-bar .ctx=${c}></sn-scene-bar>
+      <sn-floorplan class="plan" .ctx=${c}></sn-floorplan>
       ${list.length
         ? html`<div class="room-chips">
             ${list.map((a) => {
@@ -386,10 +400,6 @@ export class SmartNestProPanel extends LitElement {
             })}
           </div>`
         : nothing}
-      <sn-energy-card .ctx=${c}></sn-energy-card>
-      <sn-climate-card .ctx=${c}></sn-climate-card>
-      <sn-devices-card .ctx=${c}></sn-devices-card>
-      <sn-scenes-card .ctx=${c}></sn-scenes-card>
     </div>`;
   }
 
@@ -398,8 +408,8 @@ export class SmartNestProPanel extends LitElement {
     if (!this.hass || !this.live) return html`<div class="center"><div class="spinner"></div></div>`;
     const c = this.ctx();
     const s = c.config.settings;
-    const dark = s.theme === "dark" || (s.theme === "auto" && !!this.hass.themes?.darkMode);
-    this.toggleAttribute("dark", dark);
+    this.toggleAttribute("dark", c.palette !== "light");
+    this.setAttribute("palette", c.palette);
     this.toggleAttribute("lowfx", s.reduce_effects);
     this.toggleAttribute("phone", this.phone);
     this.dir = c.rtl ? "rtl" : "ltr";
@@ -732,95 +742,99 @@ export class SmartNestProPanel extends LitElement {
         overflow: auto;
       }
 
-      /* ---------- Home, wide ---------- */
+      /* ---------- Home, wide: the plan is the page ---------- */
       .shell main {
         container-type: inline-size;
       }
-      .home {
-        display: grid;
-        grid-template-columns: minmax(300px, 340px) minmax(0, 1fr) minmax(330px, 380px);
-        grid-template-rows: minmax(0, 1fr) auto;
-        grid-template-areas:
-          "left hero side"
-          "climate devices side";
-        gap: 20px;
+      .home-plan {
+        position: relative;
         height: 100%;
-        /* Below this the left column (greeting + energy) would spill onto the climate card: scroll instead. */
-        min-height: 780px;
+        min-height: 520px;
+        border-radius: 32px;
+        overflow: hidden;
+        background: radial-gradient(90% 80% at 50% 45%, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0) 70%);
+        border: 1px solid var(--sn-glass-border);
+        box-shadow: inset 0 1px 0 var(--sn-glass-hi);
       }
-      .col-left {
-        grid-area: left;
+      .home-plan .plan {
+        position: absolute;
+        inset: 0;
+        border-radius: 0;
+      }
+      .plan-top {
+        position: absolute;
+        top: 18px;
+        inset-inline: 22px;
+        z-index: 6;
         display: flex;
-        flex-direction: column;
-        gap: 22px;
-        min-height: 0;
-        z-index: 1;
+        align-items: center;
+        justify-content: space-between;
+        gap: 18px;
+        pointer-events: none;
+      }
+      .plan-top > * {
+        pointer-events: auto;
+      }
+      .plan-top sn-scene-bar {
+        min-width: 0;
+        max-width: 64%;
       }
       .greet {
         display: grid;
-        gap: 4px;
+        gap: 2px;
         color: var(--sn-text-on-bg);
+        text-shadow: 0 2px 18px rgba(0, 0, 0, 0.18);
       }
       .greet span {
-        font-size: 26px;
+        font-size: 18px;
         font-weight: 300;
         color: var(--sn-text-on-bg-dim);
       }
       .greet strong {
-        font-size: 44px;
+        font-size: 34px;
         font-weight: 400;
         letter-spacing: -0.02em;
         line-height: 1.05;
       }
-      .hero {
-        grid-area: hero;
-        min-height: 0;
-        margin-inline: -70px -20px;
-      }
-      .col-side {
-        grid-area: side;
+      .room-float {
+        position: absolute;
+        top: 92px;
+        bottom: 16px;
+        inset-inline-end: 16px;
+        z-index: 7;
+        width: min(380px, 42%);
         display: flex;
-        flex-direction: column;
-        gap: 16px;
-        min-height: 0;
+        animation: slide-in 0.45s cubic-bezier(0.2, 0.9, 0.3, 1);
       }
-      .col-side sn-room-panel {
+      :host([dir="rtl"]) .room-float {
+        animation-name: slide-in-rtl;
+      }
+      .room-float sn-room-panel {
         flex: 1;
         min-height: 0;
       }
-      .climate {
-        grid-area: climate;
+      .room-float .close {
+        position: absolute;
+        top: -14px;
+        inset-inline-start: -14px;
+        z-index: 2;
+        width: 36px;
+        height: 36px;
+        background: var(--sn-glass-strong);
+        color: var(--sn-text);
+        backdrop-filter: var(--sn-blur);
+        -webkit-backdrop-filter: var(--sn-blur);
       }
-      .devices {
-        grid-area: devices;
-      }
-      @container (max-width: 1080px) {
-        .home {
-          grid-template-columns: minmax(290px, 310px) minmax(0, 1fr) minmax(300px, 330px);
-          gap: 16px;
+      @keyframes slide-in {
+        from {
+          opacity: 0;
+          transform: translateX(40px);
         }
       }
-      /* Portrait tablets, or a landscape tablet with HA's sidebar open: two columns, the page scrolls. */
-      @container (max-width: 940px) {
-        .home {
-          grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-          grid-template-rows: auto;
-          grid-template-areas:
-            "left hero"
-            "climate side"
-            "devices devices";
-          height: auto;
-          min-height: 0;
-        }
-        .hero {
-          min-height: 380px;
-          margin-inline: -20px 0;
-        }
-        .col-side sn-room-panel {
-          flex: none;
-        }
-        .climate {
-          align-self: start;
+      @keyframes slide-in-rtl {
+        from {
+          opacity: 0;
+          transform: translateX(-40px);
         }
       }
       @media (max-width: 1180px) {
@@ -875,10 +889,11 @@ export class SmartNestProPanel extends LitElement {
         flex-direction: column;
         gap: 16px;
       }
-      .home-phone .hero {
-        height: 40vh;
-        min-height: 240px;
+      .home-phone .plan {
+        height: 62vh;
+        min-height: 320px;
         margin: 0 -16px;
+        border-radius: 0;
       }
       .room-chips {
         display: flex;

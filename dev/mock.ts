@@ -124,6 +124,90 @@ const demoConfig: ProConfig = {
     main_hall: { size_m2: 48, occupancy: "sensor.main_hall_people" },
   },
   pages: {},
+  plan: {
+    floors: [
+      {
+        id: "g",
+        name: "Ground",
+        wallHeight: 1.45,
+        rooms: [
+          { id: "r1", x: 0, y: 0, w: 7, h: 5, area: "main_hall" },
+          { id: "r2", x: 7, y: 0, w: 4, h: 3.5, area: "kitchen" },
+          { id: "r3", x: 7, y: 3.5, w: 4, h: 3, area: "office" },
+          {
+            id: "r4", x: 0, y: 5, w: 7, h: 3, area: "terrace",
+            pts: [{ x: 0, y: 5 }, { x: 7, y: 5 }, { x: 7, y: 8 }, { x: 1.5, y: 8 }, { x: 0, y: 6.5 }],
+          },
+        ],
+        doors: [
+          { id: "d1", x: 7, y: 1.75, angle: 90, width: 3.5, open: true },
+          { id: "d2", axis: "v", line: 7, at: 4.25, width: 0.9 },
+          { id: "d3", axis: "h", line: 5, at: 3.5, width: 1.4 },
+          { id: "d4", axis: "h", line: 8, at: 3, width: 1.2 },
+        ],
+        furniture: [
+          { id: "f1", type: "rug", x: 2.6, y: 2.6, rot: 0 },
+          { id: "f2", type: "tv_unit", x: 2.6, y: 0.3, rot: 0, entity: "media_player.oled_tv" },
+          { id: "f3", type: "sofa", x: 2.6, y: 3.9, rot: 180 },
+          { id: "f4", type: "coffee_table", x: 2.6, y: 2.6, rot: 0 },
+          { id: "f5", type: "armchair", x: 0.8, y: 2.4, rot: 90 },
+          { id: "f6", type: "ac", x: 2.6, y: 0.16, rot: 0, z: 1.08, entity: "climate.main_hall" },
+          { id: "f7", type: "floor_lamp", x: 0.45, y: 4.5, rot: 0, entity: "light.hue_master_lamp" },
+          { id: "f8", type: "curtain", x: 0.08, y: 2.5, rot: 90, entity: "cover.main_hall_curtain" },
+          { id: "f9", type: "robot", x: 5.4, y: 3.2, rot: 0, entity: "vacuum.cleanbot" },
+          { id: "f10", type: "speaker", x: 4.2, y: 0.3, rot: 0, entity: "media_player.sonos_era" },
+          { id: "f11", type: "plant", x: 6.6, y: 4.6, rot: 0 },
+          { id: "f12", type: "bookshelf", x: 6.8, y: 1.6, rot: 270 },
+          { id: "f13", type: "counter", x: 9.0, y: 0.33, rot: 0 },
+          { id: "f14", type: "fridge", x: 10.6, y: 0.4, rot: 0 },
+          { id: "f15", type: "island", x: 9.0, y: 2.2, rot: 0 },
+          { id: "f16", type: "kitchen_light", x: 9.0, y: 2.2, rot: 0, entity: "light.kitchen" },
+          { id: "f17", type: "stool", x: 8.6, y: 2.95, rot: 0 },
+          { id: "f18", type: "stool", x: 9.4, y: 2.95, rot: 0 },
+          { id: "f19", type: "desk", x: 9.4, y: 3.9, rot: 0 },
+          { id: "f20", type: "chair", x: 9.4, y: 4.55, rot: 180 },
+          { id: "f21", type: "table_lamp", x: 10.6, y: 3.85, rot: 0, entity: "light.office_desk" },
+          { id: "f22", type: "speaker", x: 7.4, y: 6.1, rot: 45, entity: "media_player.studio_speaker" },
+          { id: "f23", type: "plant", x: 10.6, y: 6.1, rot: 0 },
+          { id: "f24", type: "dining", x: 2.4, y: 6.5, rot: 0 },
+          { id: "f25", type: "ceiling_light", x: 5.6, y: 6.5, rot: 0, entity: "light.terrace" },
+          { id: "f26", type: "plant", x: 6.5, y: 7.5, rot: 0 },
+          { id: "f27", type: "led_strip", x: 2.6, y: 0.05, rot: 0, z: 0.25, entity: "light.led_strip_frame" },
+          { id: "f28", type: "air_purifier", x: 0.4, y: 0.4, rot: 0, entity: "fan.bedroom" },
+          { id: "f29", type: "chandelier", x: 2.4, y: 6.5, rot: 0 },
+          { id: "f30", type: "coffee_machine", x: 8.2, y: 0.3, rot: 0, entity: "switch.coffee_machine" },
+          { id: "f31", type: "wall_cabinets", x: 9.0, y: 0.2, rot: 0, z: 0.95 },
+          { id: "f32", type: "camera", x: 6.8, y: 7.85, rot: 180, entity: "camera.front" },
+          { id: "f33", type: "lounger", x: 5.6, y: 7.0, rot: 0 },
+        ],
+      },
+      {
+        id: "f1",
+        name: "First",
+        rooms: [
+          { id: "r5", x: 0, y: 0, w: 5, h: 4.5, area: "master_bedroom" },
+          { id: "r6", x: 5, y: 0, w: 3, h: 2.5 },
+        ],
+        doors: [{ id: "d5", axis: "v", line: 5, at: 1.2, width: 0.9 }],
+        furniture: [
+          { id: "b1", type: "bed_double", x: 2.5, y: 1.25, rot: 0 },
+          { id: "b2", type: "nightstand", x: 1.25, y: 0.35, rot: 0 },
+          { id: "b3", type: "nightstand", x: 3.75, y: 0.35, rot: 0 },
+          { id: "b4", type: "table_lamp", x: 3.75, y: 0.35, rot: 0, entity: "light.bedside" },
+          { id: "b5", type: "wardrobe", x: 3.9, y: 4.15, rot: 180 },
+          { id: "b6", type: "ceiling_fan", x: 2.5, y: 2.9, rot: 0, entity: "fan.bedroom" },
+          { id: "b7", type: "curtain", x: 0.08, y: 2.6, rot: 90, entity: "cover.bedroom_blinds" },
+          { id: "b8", type: "ac", x: 1.4, y: 4.34, rot: 180, entity: "climate.master_bedroom" },
+          { id: "b9", type: "rug", x: 2.5, y: 2.9, rot: 0 },
+          { id: "b10", type: "toilet", x: 7.6, y: 0.45, rot: 0 },
+          { id: "b11", type: "basin", x: 6.0, y: 0.3, rot: 0 },
+          { id: "b12", type: "shower", x: 7.45, y: 1.95, rot: 0 },
+        ],
+      },
+    ],
+    devices: {},
+    hidden: [],
+  },
 };
 
 const params = new URLSearchParams(location.search);
@@ -235,6 +319,11 @@ function statistics() {
 
 async function callWS(msg: Record<string, any>): Promise<any> {
   switch (msg.type) {
+    case "smartnest_pro/timer/list":
+      return {};
+    case "smartnest_pro/timer/set":
+    case "smartnest_pro/timer/cancel":
+      return null;
     case "smartnest_pro/config/get":
       return { config: saved };
     case "smartnest_pro/config/save":

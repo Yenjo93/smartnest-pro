@@ -1,5 +1,5 @@
 import type { TemplateResult } from "lit";
-import type { Hass, Lang, ProConfig } from "./types";
+import type { Hass, Lang, Palette, ProConfig } from "./types";
 import type { Translate } from "./i18n";
 
 export interface SheetSpec {
@@ -24,6 +24,8 @@ export interface Ctx {
   lang: Lang;
   rtl: boolean;
   dark: boolean;
+  /** "dark" is also true for the purple palette; this tells them apart. */
+  palette: Palette;
   phone: boolean;
   isAdmin: boolean;
   editing: boolean;

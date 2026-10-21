@@ -1,6 +1,6 @@
 # SmartNest
 
-A Home Assistant dashboard panel: a house picture with live pins, energy, climate, favorite devices, scenes and a room panel. Light and dark themes, English and Arabic (RTL), and layouts for wall tablets, desktops and phones.
+A Home Assistant dashboard panel: a live 3D floor plan of your home, energy, climate, favorite devices, scenes and a room panel. Beige, dark and Night purple themes, English and Arabic (RTL), and layouts for wall tablets, desktops and phones.
 
 Integration domain: `smartnest_pro`, so it installs next to the original SmartNest (`smartnest`) without clashing.
 
@@ -16,8 +16,16 @@ The built panel (`custom_components/smartnest_pro/frontend/`) is committed, so H
 
 Open the panel as an admin on a tablet or computer and press **Edit** (editing is off on phones).
 
-- **House picture**: *Change image* uploads your own PNG/JPG/WebP (saved under `<config>/smartnest_pro/house/`). Until then the panel shows an "add a picture" placeholder.
-- **Pins**: *Add pin*, then drag it into place. Tap a pin to bind it to a room (selects that room in the side panel) or a device (toggles it, or opens HA's dialog). Positions are stored as percentages of the picture.
+- **Floor plan**: *Edit plan* on the Home plan.
+  - *Rooms*: drag a rectangle on the grid, or select a room to move it, drag its corners to reshape it, or tap **+** on an edge to add a corner. Link each room to an HA Area.
+  - *Shape*: tap the corners of a room of any shape; tap the first corner again to close it.
+  - *Walls*: tap where a wall starts and ends, at any angle; it keeps going until you tap the last point again.
+  - *Doors*: tap a wall to cut a doorway. *Open*: tap a wall to take it out (open-plan kitchen and living room); tap the dashed line to bring it back.
+  - *Photo*: trace over a picture of your real plan. Add floors with **+**. Walls appear wherever rooms have edges, merged where rooms meet.
+- **Furniture**: the *Furniture* tool in *Edit plan* has ~140 pieces (smart, living, bedroom, kitchen, bath, office, outdoor) with search. Tap one, tap the plan to place it, drag to move, rotate in 15°/90° steps, set its height above the floor (e.g. the AC above the TV) and its size. Each floor has its own wall height. Smart pieces link to a device and react: the AC glows and blows (blue cooling, orange heating), fans spin at their speed, lamps light up in the bulb's colour, the TV screen comes on, curtains open to their position, the robot drives around while cleaning, speakers pulse while playing. Tap a linked piece to switch its device; hold it for the ring.
+- **Home** is the floor plan: the scenes bar runs along the top, tapping a room glides the camera into it and slides its panel in, tapping outside zooms back out. Energy sensors are picked in *Settings*.
+- **Devices on the plan** appear in their room automatically; in edit mode drag them to their real spot or tap ✕ to hide one. Outside edit mode a tap switches a device, a hold opens its ring: power, brightness, an off-timer (runs in HA), colour, details.
+- **Live effects**: lights make a pool of light in their colour, running AC tints the floor blue or orange, occupied rooms pulse, and an open door or window sensor lights the room's doorways amber.
 - **Cards**: each card's ⚙ picks its entities: energy meter (kWh, `total_increasing`) and solar sensors, thermostat and humidity, favorite devices, scene/script buttons.
 - **Rooms** come from HA **Areas**. The room panel's ⚙ adds size, and which thermostat, temperature, humidity and occupancy sensor to use, and hides devices.
 - **Settings**: home name, language, theme, default room, reduce effects.
@@ -47,12 +55,13 @@ Typechecks, builds the panel into `custom_components/smartnest_pro/frontend/`, a
 ```
 custom_components/smartnest_pro/   the integration HACS installs
   __init__.py      registers the panel, static paths, upload view
-  websocket.py     smartnest_pro/config/get | save | subscribe
+  websocket.py     smartnest_pro/config/get | save | subscribe, timer/set | cancel | list
   upload.py        POST /api/smartnest_pro/upload (admins, raster images only)
   frontend/        built panel
 src/
   app.ts           panel shell: loading, theme, layouts, edit mode
-  cards/           house hero, energy, climate, devices, room panel, scenes
+  plan/            3D floor plan: geometry, three.js scene, live effects, editor
+  cards/           energy, climate, devices, room panel, scenes
   pages/           rooms, climate, lights, robot, family, energy, security, media
   settings.ts      edit-mode sheets
   ha.ts            hass helpers (areas, room info, toggles)
