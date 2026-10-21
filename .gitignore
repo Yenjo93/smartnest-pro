@@ -7,3 +7,4 @@ __pycache__/
 # Someone else's artwork: kept on this Mac only, never published
 /reference/
 custom_components/smartnest_pro/frontend/static/house-default.jpg
+.prodtest/

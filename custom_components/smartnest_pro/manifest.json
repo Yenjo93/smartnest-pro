@@ -16,6 +16,6 @@
   "iot_class": "local_push",
   "requirements": [],
   "single_config_entry": true,
-  "version": "0.9.0",
+  "version": "0.9.1",
   "issue_tracker": "https://github.com/Yenjo93/smartnest-pro/issues"
 }
