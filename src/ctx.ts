@@ -4,6 +4,8 @@ import type { Translate } from "./i18n";
 
 export interface SheetSpec {
   title: string;
+  /** A title that follows the latest layout (a device's name after renaming it). */
+  titleFor?: (ctx: Ctx) => string;
   render: (ctx: Ctx) => TemplateResult;
   /** Phone room sheet: starts at half height and can be dragged to full. */
   half?: boolean;
@@ -42,4 +44,6 @@ export interface Ctx {
   /** SmartNest's own popup for any device, person or camera. */
   openEntity(entityId: string): void;
   toast(message: string): void;
+  /** Gives a device a dashboard name (undefined goes back to Home Assistant's). Saves straight away outside edit mode. */
+  rename(entityId: string, name: string | undefined): void;
 }

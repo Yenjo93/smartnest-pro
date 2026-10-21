@@ -100,6 +100,8 @@ export interface ProConfig {
   };
   rooms: Record<string, RoomOverride>;
   plan: Plan;
+  /** Names shown on the dashboard instead of Home Assistant's, by entity id. */
+  names?: Record<string, string>;
   /** Per page: items taken off it in edit mode (entity ids, or area ids on the Rooms page). */
   pages: Record<string, { hidden?: string[] }>;
 }

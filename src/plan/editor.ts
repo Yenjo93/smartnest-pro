@@ -90,6 +90,11 @@ export class SnPlanEditor extends LitElement {
   @state() private selWall?: string;
   /** Pointer position on the board, for the rubber-band line while drawing. */
   @state() private cursor?: PlanPoint;
+  /**
+   * Slider values while a slider is being dragged. The 3D view rebuilds the whole floor for these, which is
+   * too heavy to do on every pixel on a tablet, so the layout only changes when the slider is let go.
+   */
+  @state() private live: { wall?: number; z?: number; scale?: number } = {};
 
   private get floor(): PlanFloor | undefined {
     const floors = this.ctx.config.plan.floors;
@@ -384,8 +389,14 @@ export class SnPlanEditor extends LitElement {
     if (sel) {
       const opts = it?.domains ? entityOptions(this.ctx, it.domains) : [];
       const ceiling = it?.mount === "ceiling";
-      const z = pieceZ(sel.type, sel.z);
-      const scale = sel.scale ?? 1;
+      const z = this.live.z ?? pieceZ(sel.type, sel.z);
+      const scale = this.live.scale ?? sel.scale ?? 1;
+      const clampZ = (v: number) => Math.min(2.5, Math.max(0, Math.round(v * 100) / 100));
+      const clampS = (v: number) => Math.min(2.5, Math.max(0.4, Math.round(v * 100) / 100));
+      const setZ = (v: number) => this.setFurn(sel.id, (f) => (f.z = clampZ(v)));
+      const setScale = (v: number) => this.setFurn(sel.id, (f) => (f.scale = clampS(v)));
+      const bumpZ = (dv: number) => this.setFurn(sel.id, (f) => (f.z = clampZ(pieceZ(f.type, f.z) + dv)));
+      const bumpScale = (dv: number) => this.setFurn(sel.id, (f) => (f.scale = clampS((f.scale ?? 1) + dv)));
       return html`<div class="panel">
         <span class="fname">${itemName(sel.type, lang)}</span>
         <div class="rot">
@@ -410,20 +421,8 @@ export class SnPlanEditor extends LitElement {
           this.selFurn = undefined;
         }}>${icon(mdiDelete, 18)}</button>
         <div class="sliders">
-          <label class="slider">
-            <span>${ceiling ? t("hang_down") : t("height_above_floor")} <b>${z.toFixed(2)} m</b></span>
-            <input type="range" min="0" max="2.5" step="0.01" .value=${String(z)} @input=${(e: Event) => {
-              const v = Number((e.target as HTMLInputElement).value);
-              this.setFurn(sel.id, (f) => (f.z = Math.round(v * 100) / 100));
-            }} />
-          </label>
-          <label class="slider">
-            <span>${t("size")} <b>${Math.round(scale * 100)}%</b></span>
-            <input type="range" min="0.4" max="2.5" step="0.05" .value=${String(scale)} @input=${(e: Event) => {
-              const v = Number((e.target as HTMLInputElement).value);
-              this.setFurn(sel.id, (f) => (f.scale = Math.round(v * 100) / 100));
-            }} />
-          </label>
+          ${this.stepper(ceiling ? t("hang_down") : t("height_above_floor"), `${z.toFixed(2)} m`, z, 0, 2.5, 0.01, 0.05, "z", setZ, bumpZ)}
+          ${this.stepper(t("size"), `${Math.round(scale * 100)}%`, scale, 0.4, 2.5, 0.05, 0.1, "scale", setScale, bumpScale)}
           <button class="reset" @click=${() => this.setFurn(sel.id, (f) => ((f.z = undefined), (f.scale = undefined)))}>${t("reset")}</button>
         </div>
       </div>`;
@@ -487,6 +486,41 @@ export class SnPlanEditor extends LitElement {
     this.ctx.update((d) => (d.plan.floors = d.plan.floors.filter((f) => f.id !== id)));
     this.floorId = undefined;
     this.setTool(this.tool);
+  }
+
+  /** A slider with − and + buttons. Dragging only moves the number; the layout changes on release or a button press. */
+  private stepper(
+    label: string,
+    shown: string,
+    value: number,
+    min: number,
+    max: number,
+    step: number,
+    nudge: number,
+    key: "wall" | "z" | "scale",
+    commit: (v: number) => void,
+    /** Adds to the saved value itself, so quick taps each count even before the screen catches up. */
+    bump: (delta: number) => void,
+  ) {
+    return html`<div class="slider ${key === "wall" ? "wall" : ""}">
+      <span>${label} <b>${shown}</b></span>
+      <div class="step-row">
+        <button class="nudge" aria-label="−" @click=${() => bump(-nudge)}>−</button>
+        <input
+          type="range"
+          min=${min}
+          max=${max}
+          step=${step}
+          .value=${String(value)}
+          @input=${(e: Event) => (this.live = { ...this.live, [key]: Number((e.target as HTMLInputElement).value) })}
+          @change=${(e: Event) => {
+            commit(Number((e.target as HTMLInputElement).value));
+            this.live = { ...this.live, [key]: undefined };
+          }}
+        />
+        <button class="nudge" aria-label="+" @click=${() => bump(nudge)}>+</button>
+      </div>
+    </div>`;
   }
 
   private toolPanel() {
@@ -689,11 +723,22 @@ export class SnPlanEditor extends LitElement {
               <span>${t("floor_name")}</span>
               <input type="text" .value=${this.floor.name} @change=${(e: Event) => this.edit((f) => (f.name = (e.target as HTMLInputElement).value || f.name))} />
             </label>
-            <label class="slider wall">
-              <span>${t("wall_height")} <b>${(this.floor.wallHeight ?? WALL_H).toFixed(2)} m</b></span>
-              <input type="range" min="0.5" max="3" step="0.05" .value=${String(this.floor.wallHeight ?? WALL_H)} @input=${(e: Event) =>
-                this.edit((f) => (f.wallHeight = Number((e.target as HTMLInputElement).value)))} />
-            </label>
+            ${(() => {
+              const wall = this.live.wall ?? this.floor!.wallHeight ?? WALL_H;
+              const clampW = (v: number) => Math.min(3, Math.max(0.5, Math.round(v * 100) / 100));
+              return this.stepper(
+                t("wall_height"),
+                `${wall.toFixed(2)} m`,
+                wall,
+                0.5,
+                3,
+                0.05,
+                0.05,
+                "wall",
+                (v) => this.edit((f) => (f.wallHeight = clampW(v))),
+                (dv) => this.edit((f) => (f.wallHeight = clampW((f.wallHeight ?? WALL_H) + dv))),
+              );
+            })()}
             <button class="danger" @click=${() => this.removeFloor(this.floor!.id)}>${icon(mdiDelete, 18)}${t("delete_floor")}</button>
           </div>`
         : nothing}
@@ -860,7 +905,23 @@ export class SnPlanEditor extends LitElement {
         accent-color: var(--sn-accent-strong);
       }
       .slider.wall {
-        max-width: 280px;
+        max-width: 340px;
+      }
+      .step-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .nudge {
+        flex: none;
+        width: 36px;
+        height: 36px;
+        border-radius: 50%;
+        border: 1px solid var(--sn-glass-border);
+        background: rgba(255, 255, 255, 0.08);
+        color: var(--sn-text);
+        font-size: 18px;
+        cursor: pointer;
       }
       .reset {
         height: 38px;

@@ -66,7 +66,7 @@ export class SnSheet extends LitElement {
           ${this.phone ? html`<div class="grab"></div>` : nothing}
           ${spec.icon ? html`<span class="hicon">${icon(spec.icon, 22)}</span>` : nothing}
           <div class="titles">
-            <h2>${spec.title}</h2>
+            <h2>${spec.titleFor?.(this.ctx) ?? spec.title}</h2>
             ${spec.subtitle ? html`<span class="subtitle">${spec.subtitle}</span>` : nothing}
           </div>
           <button class="round" aria-label="close" @click=${this.close}>${icon(mdiClose)}</button>

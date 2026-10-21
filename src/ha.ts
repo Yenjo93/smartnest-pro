@@ -3,7 +3,15 @@ import type { Hass, HassArea, HassEntity, RoomOverride } from "./types";
 
 export const domainOf = (id: string) => id.split(".")[0];
 
+/**
+ * Names given on the dashboard. Kept here (set by the panel on every render) so every card, page and popup
+ * picks them up through nameOf without passing the layout around.
+ */
+let nameOverrides: Record<string, string> = {};
+export const setNameOverrides = (names: Record<string, string> | undefined) => (nameOverrides = names ?? {});
+
 export const nameOf = (hass: Hass, id: string): string => {
+  if (nameOverrides[id]) return nameOverrides[id];
   const s = hass.states[id];
   return (s?.attributes.friendly_name as string) || id.split(".")[1]?.replace(/_/g, " ") || id;
 };

@@ -9,6 +9,7 @@ import { moreInfo } from "../cards/devices-card";
 import "./views";
 import "./camera-view";
 import "./person-view";
+import "./rename";
 import "../ui/level";
 import "../cards/climate-card";
 import "../cards/media-player";
@@ -52,10 +53,12 @@ export function entitySheet(ctx: Ctx, id: string): SheetSpec {
   const d = domainOf(id);
   return {
     title: nameOf(ctx.hass, id),
+    titleFor: (c) => nameOf(c.hass, id),
     subtitle: areaName(ctx.hass, id),
     icon: entityIcon(id, ctx.hass.states[id]),
     wide: d === "camera" || d === "person",
     render: (c) => html`
+      ${c.isAdmin ? html`<sn-rename .ctx=${c} .entity=${id}></sn-rename>` : nothing}
       ${body(c, id)}
       ${c.isAdmin || d !== "person"
         ? html`<div style="display:flex;justify-content:center;margin-top:18px">
