@@ -184,6 +184,10 @@ export interface Piece {
   active: boolean;
   update(s?: HassEntity): void;
   tick?(dt: number, t: number): void;
+  /** Screens: true while switched on. */
+  screenOn?: boolean;
+  /** Screens: a picture to show on the screen while it's on (what's on the TV), or null for the plain glow. */
+  setPicture?(tex: THREE.Texture | null): void;
 }
 
 export const still = (group: THREE.Group): Piece => ({ group, active: false, update() {} });
@@ -459,22 +463,42 @@ function fan(m: Mats, kind: "ceiling" | "floor" | "purifier"): Piece {
   });
 }
 
-/** Screens: on lights them, playing makes the picture gently change colour. */
+/**
+ * Screens: on lights them, playing makes the picture gently change colour. With a picture (setPicture), the
+ * screen shows it instead while it's on.
+ */
 export function screenReact(g: THREE.Group, screen: THREE.MeshStandardMaterial, glow?: THREE.Sprite, base = "#8fb4ff"): Piece {
   const col = new THREE.Color(base);
+  let picture: THREE.Texture | null = null;
+  let playing = false;
+  const paint = () => {
+    const on = !!piece.screenOn;
+    const pic = on ? picture : null;
+    if (screen.emissiveMap !== pic) {
+      screen.emissiveMap = pic;
+      screen.needsUpdate = true;
+    }
+    screen.emissive.copy(pic ? new THREE.Color(1, 1, 1) : on ? col : new THREE.Color(0, 0, 0));
+    screen.emissiveIntensity = pic ? 1 : on ? 0.9 : 0;
+    if (glow) {
+      glow.visible = on;
+      glow.material.opacity = pic ? 0.22 : 0.35;
+      glow.material.color.copy(col);
+    }
+    piece.active = playing && !pic;
+  };
   const piece: Piece = {
     group: g,
     active: false,
+    screenOn: false,
     update(s) {
-      const on = running(s) || s?.state === "on" || s?.state === "idle" || s?.state === "paused";
-      screen.emissive.copy(on ? col : new THREE.Color(0, 0, 0));
-      screen.emissiveIntensity = on ? 0.9 : 0;
-      if (glow) {
-        glow.visible = on;
-        glow.material.opacity = 0.35;
-        glow.material.color.copy(col);
-      }
-      piece.active = s?.state === "playing";
+      piece.screenOn = running(s) || s?.state === "on" || s?.state === "idle" || s?.state === "paused";
+      playing = s?.state === "playing";
+      paint();
+    },
+    setPicture(tex) {
+      picture = tex;
+      paint();
     },
     tick(_dt, t) {
       const c = new THREE.Color().setHSL(0.6 + 0.06 * Math.sin(t * 0.7), 0.6, 0.62);

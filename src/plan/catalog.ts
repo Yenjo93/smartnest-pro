@@ -277,3 +277,6 @@ export const itemName = (type: string, lang: Lang) => item(type)?.name[lang] ?? 
 
 /** Height above the floor (or below the ceiling) a placed piece actually uses. */
 export const pieceZ = (type: string, z?: number) => z ?? item(type)?.z ?? 0;
+
+/** Screens that can show a camera's picture (what's on the TV). */
+export const PICTURE_TYPES = ["tv_unit", "tv_wall", "monitor"];
