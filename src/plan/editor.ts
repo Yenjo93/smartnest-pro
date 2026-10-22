@@ -18,7 +18,7 @@ import {
   mdiWall,
   mdiWallSconceFlatOutline,
 } from "@mdi/js";
-import { CATALOG, CATEGORIES, item, itemName, pieceZ, type Category } from "./catalog";
+import { CATALOG, CATEGORIES, PICTURE_TYPES, item, itemName, pieceZ, type Category } from "./catalog";
 import { entityOptions, fieldStyles } from "../ui/fields";
 import { areas, nameOf } from "../ha";
 import type { Ctx } from "../ctx";
@@ -418,6 +418,20 @@ export class SnPlanEditor extends LitElement {
               }}>
                 <option value="" ?selected=${!sel.entity}>${t("none")}</option>
                 ${opts.map((id) => html`<option value=${id} ?selected=${id === sel.entity}>${nameOf(hass, id)} · ${id}</option>`)}
+              </select>
+            </label>`
+          : nothing}
+        ${PICTURE_TYPES.includes(sel.type)
+          ? html`<label class="field inline grow">
+              <span>${t("picture_source")}</span>
+              <select @change=${(e: Event) => {
+                const v = (e.target as HTMLSelectElement).value || undefined;
+                this.setFurn(sel.id, (f) => (f.source = v));
+              }}>
+                <option value="" ?selected=${!sel.source}>${t("none")}</option>
+                ${entityOptions(this.ctx, ["camera"]).map(
+                  (id) => html`<option value=${id} ?selected=${id === sel.source}>${nameOf(hass, id)} · ${id}</option>`,
+                )}
               </select>
             </label>`
           : nothing}

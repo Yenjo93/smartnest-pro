@@ -15,6 +15,13 @@ import "../ui/level";
 import "../cards/climate-card";
 import "../cards/media-player";
 import "../cards/robot-card";
+import "../ui/live-video";
+
+/** The camera showing what's on this TV, if a TV on the plan links both. */
+function tvSource(c: Ctx, id: string): string | undefined {
+  for (const f of c.config.plan.floors) for (const p of f.furniture ?? []) if (p.entity === id && p.source && c.hass.states[p.source]) return p.source;
+  return undefined;
+}
 
 const TOGGLES = ["switch", "fan", "input_boolean", "light", "cover", "humidifier", "siren", "scene", "script", "button", "automation"];
 
@@ -29,8 +36,16 @@ function body(c: Ctx, id: string) {
       return html`<sn-person-view .ctx=${c} .entity=${id}></sn-person-view>`;
     case "climate":
       return html`<sn-climate-card bare .ctx=${c} .entity=${id}></sn-climate-card>`;
-    case "media_player":
-      return html`<sn-media-player bare .ctx=${c} .entity=${id}></sn-media-player>`;
+    case "media_player": {
+      // What's on the TV, live, above the controls; only while it's on (a capture card shows "no signal" otherwise).
+      const src = tvSource(c, id);
+      const on = s && !["off", "standby", "unavailable", "unknown"].includes(s.state);
+      return html`${src && on
+          ? html`<sn-live-video .hass=${c.hass} .entity=${src}
+              style="aspect-ratio:16/9;border-radius:20px;margin-bottom:16px;box-shadow:0 24px 50px -20px rgba(0,0,0,.6)"></sn-live-video>`
+          : nothing}
+        <sn-media-player bare .ctx=${c} .entity=${id}></sn-media-player>`;
+    }
     case "vacuum":
     case "lawn_mower":
       return html`<sn-robot-card bare .ctx=${c} .entity=${id}></sn-robot-card>`;
@@ -57,7 +72,7 @@ export function entitySheet(ctx: Ctx, id: string): SheetSpec {
     titleFor: (c) => nameOf(c.hass, id),
     subtitle: areaName(ctx.hass, id),
     icon: entityIcon(id, ctx.hass.states[id]),
-    wide: d === "camera" || d === "person",
+    wide: d === "camera" || d === "person" || (d === "media_player" && !!tvSource(ctx, id)),
     medium: d === "light" && (lightCaps(ctx.hass.states[id]?.attributes).color || lightCaps(ctx.hass.states[id]?.attributes).temp),
     render: (c) => html`
       ${c.isAdmin ? html`<sn-rename .ctx=${c} .entity=${id}></sn-rename>` : nothing}

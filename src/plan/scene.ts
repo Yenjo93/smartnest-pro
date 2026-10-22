@@ -1,9 +1,10 @@
 // The 3D floor plan: three.js scene, fixed isometric camera, pan and zoom, and the live room effects.
 // Renders only when something changed, so a wall tablet isn't spinning its GPU for a still picture.
 import * as THREE from "three";
-import type { HassEntity, Palette, PlanFloor, PlanRoom } from "../types";
+import type { Hass, HassEntity, Palette, PlanFloor, PlanRoom } from "../types";
 import { buildPiece, makeMats, type Mats, type Piece } from "./furniture";
-import { WALL_H, WALL_T, bounds, doorPos, gapTouchesRoom, innerPoint, roomPts, walls } from "./geometry";
+import { WALL_H, WALL_T, bounds, doorPos, gapTouchesRoom, innerPoint, inside, roomPts, walls } from "./geometry";
+import { TvFeed } from "./tv-feed";
 import { item, pieceZ } from "./catalog";
 import type { RoomLive } from "./live";
 
@@ -33,19 +34,28 @@ export const VIEWS = { top: 88, high: 66, normal: 52, low: 32, eye: 12 } as cons
 export type View = keyof typeof VIEWS;
 export const DEFAULT_AZIMUTH = 38;
 
-/** A soft round glow drawn once and reused for every room's light pool. */
+/** A soft round glow made once and reused for every room's light pool. Built from raw pixels, not a 2D canvas:
+ * Safari's fingerprinting protection adds random coloured noise to canvas pixels handed to WebGL, which showed as
+ * rainbow speckles wherever a light was on. */
 function glowTexture(): THREE.Texture {
-  const c = document.createElement("canvas");
-  c.width = c.height = 128;
-  const g = c.getContext("2d")!;
-  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
-  grad.addColorStop(0, "rgba(255,255,255,1)");
-  grad.addColorStop(0.35, "rgba(255,255,255,0.55)");
-  grad.addColorStop(1, "rgba(255,255,255,0)");
-  g.fillStyle = grad;
-  g.fillRect(0, 0, 128, 128);
-  const t = new THREE.CanvasTexture(c);
+  const size = 128;
+  const data = new Uint8Array(size * size * 4);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const d = Math.min(1, Math.hypot(x + 0.5 - size / 2, y + 0.5 - size / 2) / (size / 2));
+      // The same falloff as before: 1 at the centre, 0.55 at 35%, 0 at the edge.
+      const a = d < 0.35 ? 1 - (0.45 * d) / 0.35 : 0.55 * (1 - (d - 0.35) / 0.65);
+      const i = (y * size + x) * 4;
+      data[i] = data[i + 1] = data[i + 2] = 255;
+      data[i + 3] = Math.round(a * 255);
+    }
+  }
+  const t = new THREE.DataTexture(data, size, size, THREE.RGBAFormat);
   t.colorSpace = THREE.SRGBColorSpace;
+  t.magFilter = THREE.LinearFilter;
+  t.minFilter = THREE.LinearMipmapLinearFilter;
+  t.generateMipmaps = true;
+  t.needsUpdate = true;
   return t;
 }
 
@@ -73,6 +83,12 @@ export class PlanScene {
   private mats?: Mats;
   private pieces = new Map<string, { piece: Piece; entity?: string; x: number; y: number }>();
   private furnitureRoot = new THREE.Group();
+  /** Screens showing a camera (what's on the TV), by furniture id, with the room they stand in. */
+  private feeds = new Map<string, { feed: TvFeed; room?: string }>();
+  /** The room the camera is zoomed into: TVs there play live. */
+  private liveRoom?: string;
+  /** Home Assistant, for the TV feeds. Left unset (robot room picker), screens just glow. */
+  hass?: () => Hass;
   private anim = 0;
   private clock = new THREE.Clock();
   private tween = 0;
@@ -166,6 +182,8 @@ export class PlanScene {
     }
     this.rooms.clear();
     this.pieces.clear();
+    for (const { feed } of this.feeds.values()) feed.dispose();
+    this.feeds.clear();
     this.furnitureRoot = new THREE.Group();
     this.group.add(this.furnitureRoot);
     if (this.mats) for (const v of Object.values(this.mats)) if (v instanceof THREE.Material) v.dispose();
@@ -184,6 +202,13 @@ export class PlanScene {
       piece.group.userData.furnitureId = f.id;
       this.furnitureRoot.add(piece.group);
       this.pieces.set(f.id, { piece, entity: f.entity, x: f.x, y: f.y });
+      if (f.source && piece.setPicture && this.hass) {
+        const feed = new TvFeed(this.hass, f.source, (tex) => {
+          piece.setPicture!(tex);
+          this.render();
+        });
+        this.feeds.set(f.id, { feed, room: floor.rooms.find((r) => inside(roomPts(r), f.x, f.y))?.id });
+      }
     }
     const b = bounds(floor);
     const cx = b.x + b.w / 2;
@@ -338,12 +363,25 @@ export class PlanScene {
   /** Feeds every linked piece its device's state, and starts or stops the animation loop as needed. */
   setStates(states: Record<string, HassEntity>) {
     for (const { piece, entity } of this.pieces.values()) piece.update(entity ? states[entity] : undefined);
+    this.syncFeeds();
     this.render();
     this.animate();
   }
 
+  /** TVs that are on show their camera: live in the zoomed-in room, a still frame elsewhere; off ones stop. */
+  private syncFeeds() {
+    for (const [id, { feed, room }] of this.feeds) {
+      const piece = this.pieces.get(id)?.piece;
+      const mode = !piece?.screenOn ? undefined : this.liveRoom && room === this.liveRoom ? "live" : "still";
+      if (mode === feed.mode) continue;
+      feed.set(mode);
+      if (!mode) piece?.setPicture?.(null);
+    }
+    this.animate();
+  }
+
   private animate() {
-    const moving = [...this.pieces.values()].some((p) => p.piece.active);
+    const moving = [...this.pieces.values()].some((p) => p.piece.active) || [...this.feeds.values()].some((f) => f.feed.mode === "live");
     if (!moving) {
       cancelAnimationFrame(this.anim);
       this.anim = 0;
@@ -358,6 +396,11 @@ export class PlanScene {
       for (const { piece } of this.pieces.values())
         if (piece.active) {
           piece.tick?.(dt, t);
+          any = true;
+        }
+      for (const { feed } of this.feeds.values())
+        if (feed.mode === "live") {
+          feed.frame();
           any = true;
         }
       this.renderer.render(this.scene, this.camera);
@@ -393,6 +436,10 @@ export class PlanScene {
    * over ~0.7 s; the HTML icons follow every frame.
    */
   flyTo(room: PlanRoom | undefined, floor: PlanFloor, shiftPx = 0, focus?: { x: number; y: number }) {
+    if (this.liveRoom !== room?.id) {
+      this.liveRoom = room?.id;
+      this.syncFeeds();
+    }
     const b = room ? { x: room.x, y: room.y, w: room.w, h: room.h } : bounds(floor);
     const toTarget = focus ? new THREE.Vector3(focus.x, 0, focus.y) : new THREE.Vector3(b.x + b.w / 2, 0, b.y + b.h / 2);
     let toZoom = 1;

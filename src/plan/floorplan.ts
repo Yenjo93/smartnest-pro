@@ -123,6 +123,8 @@ export class SnFloorplan extends LitElement {
         if (!this.isConnected) return;
         const scene = new PlanScene(host, this.ctx.palette, !this.ctx.config.settings.reduce_effects);
         scene.onRender = () => this.requestUpdate();
+        // TVs show what's on them on the Home plan, not in the robot's room picker.
+        if (!this.pick) scene.hass = () => this.ctx.hass;
         this.scene = scene;
         const saved = Number(readPref("sn-plan-azimuth"));
         if (Number.isFinite(saved) && readPref("sn-plan-azimuth") !== null) scene.setAzimuth(saved);

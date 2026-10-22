@@ -6,17 +6,18 @@ import { shared } from "../styles";
 import { areaName, byDomain, nameOf } from "../ha";
 import { icon } from "../ui/icon";
 import { shown } from "../pages/hide";
+import { snapshotUrl } from "../ui/stream";
+import "../ui/live-video";
 
 /**
- * Live camera: HA's MJPEG stream (camera_proxy_stream) when the camera offers it, otherwise a snapshot refreshed
- * every two seconds. The other cameras sit underneath as thumbnails to switch between.
+ * Live camera at full quality and frame rate (WebRTC when the camera offers it, see sn-live-video). The other
+ * cameras sit underneath as snapshot thumbnails to switch between.
  */
 @customElement("sn-camera-view")
 export class SnCameraView extends LitElement {
   @property({ attribute: false }) ctx!: Ctx;
   @property() entity!: string;
   @state() private current?: string;
-  @state() private snapshot = false;
   @state() private tick = 0;
   @state() private clock = new Date();
   private timer?: number;
@@ -25,7 +26,7 @@ export class SnCameraView extends LitElement {
     super.connectedCallback();
     this.timer = window.setInterval(() => {
       this.clock = new Date();
-      if (this.snapshot) this.tick++;
+      this.tick++;
     }, 2000);
   }
   disconnectedCallback() {
@@ -37,16 +38,13 @@ export class SnCameraView extends LitElement {
     return this.current ?? this.entity;
   }
 
-  private url(id: string, live: boolean): string | undefined {
-    const pic = this.ctx.hass.states[id]?.attributes.entity_picture as string | undefined;
-    if (!pic) return undefined;
-    if (live && pic.includes("/api/camera_proxy/")) return pic.replace("/api/camera_proxy/", "/api/camera_proxy_stream/");
-    return `${pic}${pic.includes("?") ? "&" : "?"}t=${this.tick}`;
+  /** Thumbnails refresh every 10 s. */
+  private thumb(id: string) {
+    return snapshotUrl(this.ctx.hass, id, Math.floor(this.tick / 5));
   }
 
   private select(id: string) {
     this.current = id;
-    this.snapshot = false;
   }
 
   private fullscreen() {
@@ -59,18 +57,11 @@ export class SnCameraView extends LitElement {
     const { hass, t, lang } = this.ctx;
     const id = this.cam;
     const others = shown(this.ctx, "security", byDomain(hass, "camera"));
-    const src = this.url(id, !this.snapshot);
     const area = areaName(hass, id);
     return html`
       <div class="stage">
-        ${src
-          ? html`<img
-              src=${src}
-              alt=${nameOf(hass, id)}
-              @error=${() => {
-                if (!this.snapshot) this.snapshot = true;
-              }}
-            />`
+        ${hass.states[id]?.attributes.entity_picture
+          ? html`<sn-live-video .hass=${hass} .entity=${id}></sn-live-video>`
           : html`<div class="empty">${t("not_configured")}</div>`}
         <span class="live"><span class="dot"></span>${t("live")}</span>
         <button class="round fs" aria-label=${t("fullscreen")} @click=${this.fullscreen}>${icon(mdiFullscreen, 22)}</button>
@@ -83,7 +74,7 @@ export class SnCameraView extends LitElement {
         ? html`<div class="thumbs">
             ${others.map(
               (c) => html`<button class="thumb ${c === id ? "on" : ""}" @click=${() => this.select(c)}>
-                ${this.url(c, false) ? html`<img src=${this.url(c, false)!} alt="" loading="lazy" />` : nothing}
+                ${this.thumb(c) ? html`<img src=${this.thumb(c)!} alt="" loading="lazy" />` : nothing}
                 <span>${nameOf(hass, c)}</span>
               </button>`,
             )}
@@ -109,11 +100,9 @@ export class SnCameraView extends LitElement {
       .stage:fullscreen {
         border-radius: 0;
       }
-      .stage img {
+      .stage sn-live-video {
         width: 100%;
         height: 100%;
-        object-fit: contain;
-        display: block;
       }
       .live {
         position: absolute;

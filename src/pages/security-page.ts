@@ -20,6 +20,8 @@ import { areaName, byDomain, nameOf, since } from "../ha";
 import { onHold, noMenu } from "../ui/hold";
 import { pageHead, pageStyles } from "./page";
 import { hiddenButton, hideable, shown } from "./hide";
+import { subStream } from "../ui/stream";
+import "../ui/live-video";
 
 const OPENINGS = ["door", "window", "garage_door", "opening"];
 
@@ -27,19 +29,6 @@ const OPENINGS = ["door", "window", "garage_door", "opening"];
 @customElement("sn-security-page")
 export class SnSecurityPage extends LitElement {
   @property({ attribute: false }) ctx!: Ctx;
-  /** Bumped every 10 s so camera snapshots refresh. */
-  @state() private tick = 0;
-  private timer?: number;
-
-  connectedCallback() {
-    super.connectedCallback();
-    this.timer = window.setInterval(() => this.tick++, 10_000);
-  }
-  disconnectedCallback() {
-    super.disconnectedCallback();
-    clearInterval(this.timer);
-  }
-
   private lock(id: string) {
     const { hass, t } = this.ctx;
     const s = hass.states[id];
@@ -91,12 +80,13 @@ export class SnSecurityPage extends LitElement {
     </div>`;
   }
 
+  /** Live on the camera's lighter stream when it has one; the popup opens the full one. */
   private camera(id: string) {
     const { hass } = this.ctx;
     const pic = hass.states[id].attributes.entity_picture as string | undefined;
     const area = areaName(hass, id);
     return html`<button class="glass cam" @click=${() => this.ctx.openEntity(id)}>
-      ${pic ? html`<img src="${pic}${pic.includes("?") ? "&" : "?"}t=${this.tick}" alt="" loading="lazy" />` : nothing}
+      ${pic ? html`<sn-live-video fit="cover" .hass=${hass} .entity=${subStream(hass, id)}></sn-live-video>` : nothing}
       <span class="cam-label">${nameOf(hass, id)}${area ? html`<small>${area}</small>` : nothing}</span>
     </button>`;
   }
@@ -234,11 +224,10 @@ export class SnSecurityPage extends LitElement {
         cursor: pointer;
         font: inherit;
       }
-      .cam img {
-        width: 100%;
-        height: 100%;
-        object-fit: cover;
-        display: block;
+      .cam sn-live-video {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
       }
       .cam-label {
         position: absolute;

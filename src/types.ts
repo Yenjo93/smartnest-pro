@@ -185,6 +185,8 @@ export interface PlanFurniture {
   scale?: number;
   /** Extra stretch along the piece's width only (a longer counter, a wider wardrobe), 1 = as built. */
   stretch?: number;
+  /** Screens: a camera showing what's on it (a TV capture card), drawn on the screen while it's on. */
+  source?: string;
 }
 
 export interface PlanFloor {
