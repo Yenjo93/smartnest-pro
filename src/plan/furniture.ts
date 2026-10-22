@@ -188,6 +188,8 @@ export interface Piece {
   screenOn?: boolean;
   /** Screens: a picture to show on the screen while it's on (what's on the TV), or null for the plain glow. */
   setPicture?(tex: THREE.Texture | null): void;
+  /** Cameras: someone was detected (Frigate), so it pulses red. */
+  setAlert?(on: boolean): void;
 }
 
 export const still = (group: THREE.Group): Piece => ({ group, active: false, update() {} });
@@ -510,6 +512,63 @@ export function screenReact(g: THREE.Group, screen: THREE.MeshStandardMaterial, 
   return piece;
 }
 
+const ALERT = new THREE.Color("#ff3b30");
+
+/**
+ * A security camera with a faint cone showing where it looks. Still while all is well (Frigate cameras are
+ * always "recording", and a blinking light would keep the plan animating all day); pulses red on an alert.
+ */
+function cctv(g: THREE.Group, m: Mats): Piece {
+  add(g, rb(0.06, 0.06, 0.04, 0.01), m.white, 0, 0, -0.06);
+  const head = new THREE.Group();
+  head.rotation.x = 0.35;
+  g.add(head);
+  add(head, rb(0.08, 0.08, 0.16, 0.03), m.white, 0, -0.03, 0.02);
+  add(head, cyl(0.026, 0.026, 0.012, 16), m.black, 0, -0.03, 0.1, false).rotation.x = Math.PI / 2;
+  const rec = emissive("#330000");
+  add(head, sphere(0.012, 8, 8), rec, 0.025, 0, 0.1, false);
+  // Field of view: an open four-sided cone from the lens, flattened to a 16:9-ish shape.
+  const coneGeo = new THREE.ConeGeometry(0.9, 2.2, 4, 1, true)
+    .rotateY(Math.PI / 4)
+    .scale(1, 1, 0.6)
+    .rotateX(-Math.PI / 2)
+    .translate(0, 0, 1.1);
+  const coneMat = new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.06, depthWrite: false, side: THREE.DoubleSide });
+  const cone = new THREE.Mesh(coneGeo, coneMat);
+  cone.position.set(0, -0.03, 0.1);
+  cone.renderOrder = 3;
+  head.add(cone);
+  let online = false;
+  let alert = false;
+  const paint = () => {
+    cone.visible = online || alert;
+    coneMat.color.copy(alert ? ALERT : new THREE.Color("#ffffff"));
+    coneMat.opacity = alert ? 0.16 : 0.06;
+    rec.emissive.copy(ALERT);
+    rec.emissiveIntensity = alert ? 2 : online ? 0.6 : 0;
+    piece.active = alert;
+  };
+  const piece: Piece = {
+    group: g,
+    active: false,
+    update(s) {
+      online = !!s && s.state !== "unavailable" && s.state !== "off";
+      paint();
+    },
+    setAlert(on) {
+      if (on === alert) return;
+      alert = on;
+      paint();
+    },
+    tick(_dt, t) {
+      const k = 0.5 + 0.5 * Math.sin(t * 5);
+      coneMat.opacity = 0.08 + 0.14 * k;
+      rec.emissiveIntensity = 0.4 + 2 * k;
+    },
+  };
+  return piece;
+}
+
 function tv(m: Mats, unit: boolean): Piece {
   const g = new THREE.Group();
   let screen: THREE.MeshStandardMaterial;
@@ -814,19 +873,8 @@ export function buildPiece(type: string, m: Mats, env: BuildEnv): Piece {
       return opening(m, "door", env.wallH);
     case "garage_door":
       return opening(m, "garage", env.wallH);
-    case "camera": {
-      add(g, rb(0.06, 0.06, 0.04, 0.01), m.white, 0, 0, -0.06);
-      add(g, rb(0.08, 0.08, 0.16, 0.03), m.white, 0, -0.03, 0.02).rotation.x = 0.35;
-      const rec = emissive("#330000");
-      add(g, sphere(0.012, 8, 8), rec, 0.025, 0, 0.1, false);
-      return smart(g, {
-        glows: [rec],
-        color: "#ff3b30",
-        intensity: 2,
-        isOn: (s) => !!s && s.state !== "unavailable" && s.state !== "off",
-        loop: (t) => (rec.emissiveIntensity = Math.sin(t * 4) > 0 ? 2 : 0.2),
-      });
-    }
+    case "camera":
+      return cctv(g, m);
     case "doorbell": {
       add(g, rb(0.08, 0.14, 0.03, 0.015), m.black, 0, 0.07, 0);
       const ring = emissive("#333333");

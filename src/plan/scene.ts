@@ -59,6 +59,10 @@ function glowTexture(): THREE.Texture {
   return t;
 }
 
+/** Room highlights: "on"/"dim" for the robot's room picker, "alert" when a camera there sees someone. */
+export type Mark = "on" | "dim" | "alert";
+const ALERT_FLOOR = new THREE.Color("#e0463c");
+
 interface RoomMeshes {
   floor: THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>;
   pool: THREE.Mesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
@@ -320,10 +324,10 @@ export class PlanScene {
 
   /** Light pools, AC tints and open-door highlights. Cheap: only colours and opacities change. */
   /** Room highlights for picking (the robot's room picker): "on" glows in the accent colour, "dim" darkens. */
-  private marks = new Map<string, "on" | "dim">();
+  private marks = new Map<string, Mark>();
   private lastLives: RoomLive[] = [];
 
-  setMarks(marks: Record<string, "on" | "dim">) {
+  setMarks(marks: Record<string, Mark>) {
     this.marks = new Map(Object.entries(marks));
     this.setEffects(this.lastLives);
   }
@@ -340,6 +344,7 @@ export class PlanScene {
       const mark = this.marks.get(live.roomId);
       if (mark === "on") col.lerp(pick, 0.6);
       else if (mark === "dim") col.multiplyScalar(0.72);
+      else if (mark === "alert") col.lerp(ALERT_FLOOR, 0.45);
       m.floor.material.color.copy(col);
       if (live.light) {
         m.pool.visible = true;
@@ -364,6 +369,13 @@ export class PlanScene {
   setStates(states: Record<string, HassEntity>) {
     for (const { piece, entity } of this.pieces.values()) piece.update(entity ? states[entity] : undefined);
     this.syncFeeds();
+    this.render();
+    this.animate();
+  }
+
+  /** Cameras that see someone pulse red. */
+  setAlerts(ids: Set<string>) {
+    for (const [id, { piece }] of this.pieces) piece.setAlert?.(ids.has(id));
     this.render();
     this.animate();
   }

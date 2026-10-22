@@ -25,9 +25,10 @@ import type { PlanFloor } from "../types";
 import { shared } from "../styles";
 import { entityIcon, icon } from "../ui/icon";
 import { noMenu, onHold, hasLevel } from "../ui/hold";
-import { domainOf, isOn, nameOf, toggle } from "../ha";
+import { domainOf, isOn, nameOf, since, toggle } from "../ha";
 import { WALL_H, bounds, innerPoint, roomAt, roomPts } from "./geometry";
-import { placedDevices, roomLive, type RoomLive } from "./live";
+import { cameraAlerts, placedDevices, roomLive, type RoomLive } from "./live";
+import type { Mark } from "./scene";
 import type { PlanScene } from "./scene";
 // Plain object (no three.js), so the menu can list views before the 3D code has loaded.
 const VIEW_ANGLES = { top: 88, high: 66, normal: 52, low: 32, eye: 12 } as const;
@@ -85,6 +86,7 @@ export class SnFloorplan extends LitElement {
   private loading?: Promise<void>;
   private builtKey = "";
   private effectsKey = "";
+  private alertsKey = "";
   private palette = "";
   private resize = new ResizeObserver(([e]) => this.scene?.resize(e.contentRect.width, e.contentRect.height));
   private pointers = new Map<number, { x: number; y: number }>();
@@ -160,11 +162,14 @@ export class SnFloorplan extends LitElement {
     if (key !== this.builtKey) {
       this.builtKey = key;
       this.effectsKey = "";
+      this.alertsKey = "";
       this.lastHass = undefined;
       scene.build(floor);
     }
     const lives = this.lives(floor);
-    const marks: Record<string, "on" | "dim"> = {};
+    const alerts = this.pick ? [] : cameraAlerts(this.ctx.hass, floor);
+    const marks: Record<string, Mark> = {};
+    for (const a of alerts) if (a.roomId) marks[a.roomId] = "alert";
     if (this.pick)
       for (const r of floor.rooms) {
         if (this.picked?.has(r.id)) marks[r.id] = "on";
@@ -175,6 +180,11 @@ export class SnFloorplan extends LitElement {
       this.effectsKey = ek;
       scene.setMarks(marks);
       scene.setEffects(lives);
+    }
+    const ak = alerts.map((a) => a.id).join();
+    if (ak !== this.alertsKey) {
+      this.alertsKey = ak;
+      scene.setAlerts(new Set(alerts.map((a) => a.id)));
     }
     if (this.lastHass !== this.ctx.hass) {
       this.lastHass = this.ctx.hass;
@@ -270,6 +280,11 @@ export class SnFloorplan extends LitElement {
     // A linked piece of furniture works its device: tap the AC to switch it, the lamp to light it.
     const hit = !this.ctx.editing ? this.pickAt(e) : undefined;
     if (hit?.entity && this.ctx.hass.states[hit.entity]) {
+      // Cameras have nothing to switch: a tap opens them live.
+      if (hit.entity.startsWith("camera.")) {
+        this.ctx.openEntity(hit.entity);
+        return;
+      }
       if (this.tapZoom) this.focusDevice(hit.entity, this.scene.piecePos(hit.id));
       else toggle(this.ctx.hass, hit.entity);
       return;
@@ -499,6 +514,20 @@ export class SnFloorplan extends LitElement {
                 ${live.people ? html`<span class="count">${icon(mdiAccountGroupOutline, 13)}${live.people}</span>` : nothing}
               </div>`;
             })}
+            ${(this.pick ? [] : cameraAlerts(hass, floor)).map((a) => {
+              const p = scene.project(a.x, a.y, 0.9);
+              // Kept inside the plan: an outdoor camera often sits right at its edge.
+              const left = Math.min(Math.max(p.left, 86), this.clientWidth - 86);
+              const top = Math.min(Math.max(p.top, 150), this.clientHeight - 10);
+              return html`<button
+                class="alert"
+                style="left:${left}px; top:${top}px"
+                @click=${() => a.camera && this.ctx.openEntity(a.camera)}
+              >
+                ${a.image ? html`<img src=${a.image} alt="" />` : nothing}
+                <span><b>${t("person_seen")}</b>${a.camera ? nameOf(hass, a.camera) : ""}${a.since ? ` · ${since(a.since, this.ctx.lang)}` : ""}</span>
+              </button>`;
+            })}
             ${devices.map((d) => {
               const pos = this.drag?.id === d.id ? this.drag : d;
               const p = scene.project(pos.x, pos.y, 0.25);
@@ -695,6 +724,51 @@ export class SnFloorplan extends LitElement {
       .label.sel {
         background: var(--sn-accent);
         color: #1d1b30;
+      }
+      .alert {
+        position: absolute;
+        transform: translate(-50%, calc(-100% - 10px));
+        display: grid;
+        width: 150px;
+        padding: 0;
+        border: 2px solid #ff4a3d;
+        border-radius: 14px;
+        overflow: hidden;
+        background: rgba(20, 16, 15, 0.82);
+        color: #fff;
+        font: inherit;
+        font-size: 11px;
+        text-align: start;
+        cursor: pointer;
+        pointer-events: auto;
+        box-shadow: 0 0 0 0 rgba(255, 74, 61, 0.6);
+        animation: alert-ring 1.6s ease-out infinite;
+        z-index: 3;
+      }
+      .alert img {
+        width: 100%;
+        aspect-ratio: 16 / 10;
+        object-fit: cover;
+        display: block;
+      }
+      .alert span {
+        display: grid;
+        gap: 1px;
+        padding: 6px 9px;
+        opacity: 0.85;
+      }
+      .alert b {
+        color: #ff8a80;
+        font-weight: 500;
+        font-size: 12px;
+      }
+      @keyframes alert-ring {
+        70% {
+          box-shadow: 0 0 0 12px rgba(255, 74, 61, 0);
+        }
+        100% {
+          box-shadow: 0 0 0 0 rgba(255, 74, 61, 0);
+        }
       }
       .presence {
         position: absolute;

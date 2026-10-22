@@ -33,6 +33,7 @@ import { generalSettings } from "./settings";
 import { textField } from "./ui/fields";
 import { icon } from "./ui/icon";
 import { entitySheet } from "./popups/entity-popup";
+import { doorSheet } from "./popups/door-view";
 import { lightCaps } from "./ui/light-color";
 
 const hasColour = (attrs?: Record<string, any>) => {
@@ -134,6 +135,29 @@ export class SmartNestProPanel extends LitElement {
 
   protected willUpdate(changed: Map<string, unknown>) {
     if (changed.has("hass") && this.hass && !this.config && !this.loadError) this.load();
+    if (changed.has("hass")) this.checkDoorbell();
+  }
+
+  /** The last doorbell press seen ("" while not ringing); undefined until the first look, so loading doesn't ring. */
+  private bellSeen?: string;
+  private bellSheet?: SheetSpec;
+  private bellTimer?: number;
+
+  /** A doorbell press opens the door camera on kiosk screens (the wall tablet), and closes it again after 90 s. */
+  private checkDoorbell() {
+    const id = this.config?.door?.doorbell;
+    const s = id ? this.hass?.states[id] : undefined;
+    // An event entity's state is the time of its last event; a binary sensor is on while ringing.
+    const now = !s || s.state === "unavailable" ? "" : id!.startsWith("event.") ? s.state : s.state === "on" ? s.last_changed : "";
+    const prev = this.bellSeen;
+    this.bellSeen = now;
+    if (prev === undefined || !now || now === prev || !this.kiosk || !this.live) return;
+    this.bellSheet = doorSheet(this.ctx());
+    this.sheet = this.bellSheet;
+    clearTimeout(this.bellTimer);
+    this.bellTimer = window.setTimeout(() => {
+      if (this.sheet === this.bellSheet) this.sheet = undefined;
+    }, 90_000);
   }
 
   protected updated(changed: Map<string, unknown>) {
