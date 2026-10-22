@@ -101,6 +101,8 @@ export interface ProConfig {
     solar_power?: string;
     /** Solar energy meter (kWh, total_increasing): today's share of solar in the ECO chip. */
     solar_energy?: string;
+    /** Weather in the top bar and on the screensaver; empty means the first weather entity. */
+    weather?: string;
     climate?: string;
     humidity?: string;
     devices: string[];

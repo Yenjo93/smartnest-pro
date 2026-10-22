@@ -569,6 +569,70 @@ function cctv(g: THREE.Group, m: Mats): Piece {
   return piece;
 }
 
+/** Watts from a power sensor, whatever its unit. */
+export function watts(s?: HassEntity): number | undefined {
+  const v = Number(s?.state);
+  if (!s || !Number.isFinite(v)) return undefined;
+  const u = String(s.attributes.unit_of_measurement ?? "W");
+  return u === "kW" ? v * 1000 : u === "MW" ? v * 1e6 : v;
+}
+
+const FLOW_LOW = new THREE.Color("#7ed957");
+const FLOW_HIGH = new THREE.Color("#ff9a3c");
+const FLOW_MAX = new THREE.Color("#ff4a3d");
+
+/**
+ * The house's electric panel, with power flowing in from outside along a line out of its back (mount it on an
+ * outside wall). The dots run faster and turn from green to orange to red as the house draws more.
+ */
+function electricPanel(g: THREE.Group, m: Mats): Piece {
+  add(g, rb(0.36, 0.5, 0.1, 0.02), m.white, 0, 0.25, 0);
+  add(g, rb(0.3, 0.003, 0.004, 0.001), m.metal, 0, 0.33, 0.051, false);
+  const disp = emissive("#111111");
+  add(g, new THREE.PlaneGeometry(0.12, 0.05), disp, 0, 0.4, 0.052, false);
+  const L = 2.6;
+  const back = -0.05;
+  const track = new THREE.Mesh(cyl(0.01, 0.01, L, 6), new THREE.MeshBasicMaterial({ color: "#ffffff", transparent: true, opacity: 0.18 }));
+  track.rotation.x = Math.PI / 2;
+  track.position.set(0, 0.25, back - L / 2);
+  g.add(track);
+  const dotMat = new THREE.MeshBasicMaterial({ color: FLOW_LOW });
+  const dots: THREE.Mesh[] = [];
+  const N = 9;
+  for (let i = 0; i < N; i++) {
+    const d = new THREE.Mesh(sphere(0.028, 10, 8), dotMat);
+    d.position.y = 0.25;
+    g.add(d);
+    dots.push(d);
+  }
+  let speed = 0;
+  let offset = 0;
+  const place = () => dots.forEach((d, i) => (d.position.z = back - L + ((((i / N) * L + offset) % L) + L) % L));
+  place();
+  const piece: Piece = {
+    group: g,
+    active: false,
+    update(s) {
+      const w = watts(s) ?? 0;
+      const kw = w / 1000;
+      const on = w > 5;
+      const col = kw < 2 ? FLOW_LOW.clone().lerp(FLOW_HIGH, kw / 2) : FLOW_HIGH.clone().lerp(FLOW_MAX, Math.min(1, (kw - 2) / 3));
+      dotMat.color.copy(col);
+      disp.emissive.copy(on ? col : new THREE.Color(0, 0, 0));
+      disp.emissiveIntensity = on ? 1.2 : 0;
+      track.material.color.copy(on ? col : new THREE.Color("#ffffff"));
+      dots.forEach((d) => (d.visible = on));
+      speed = 0.35 + Math.min(kw, 6) * 0.35;
+      piece.active = on;
+    },
+    tick(dt) {
+      offset += dt * speed;
+      place();
+    },
+  };
+  return piece;
+}
+
 function tv(m: Mats, unit: boolean): Piece {
   const g = new THREE.Group();
   let screen: THREE.MeshStandardMaterial;
@@ -875,6 +939,8 @@ export function buildPiece(type: string, m: Mats, env: BuildEnv): Piece {
       return opening(m, "garage", env.wallH);
     case "camera":
       return cctv(g, m);
+    case "electric_panel":
+      return electricPanel(g, m);
     case "doorbell": {
       add(g, rb(0.08, 0.14, 0.03, 0.015), m.black, 0, 0.07, 0);
       const ring = emissive("#333333");

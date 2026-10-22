@@ -5,6 +5,7 @@ import {
   mdiClose,
   mdiFloorPlan,
   mdiInformationOutline,
+  mdiLightningBolt,
   mdiMagnifyMinusOutline,
   mdiMagnifyPlusOutline,
   mdiPalette,
@@ -280,8 +281,8 @@ export class SnFloorplan extends LitElement {
     // A linked piece of furniture works its device: tap the AC to switch it, the lamp to light it.
     const hit = !this.ctx.editing ? this.pickAt(e) : undefined;
     if (hit?.entity && this.ctx.hass.states[hit.entity]) {
-      // Cameras have nothing to switch: a tap opens them live.
-      if (hit.entity.startsWith("camera.")) {
+      // Cameras and sensors (the electric panel) have nothing to switch: a tap opens them.
+      if (["camera", "sensor"].includes(domainOf(hit.entity))) {
         this.ctx.openEntity(hit.entity);
         return;
       }
@@ -514,6 +515,14 @@ export class SnFloorplan extends LitElement {
                 ${live.people ? html`<span class="count">${icon(mdiAccountGroupOutline, 13)}${live.people}</span>` : nothing}
               </div>`;
             })}
+            ${(this.pick ? [] : (floor.furniture ?? []).filter((f) => f.type === "electric_panel" && f.entity && hass.states[f.entity])).map((f) => {
+              const w = Number(hass.states[f.entity!].state) * (hass.states[f.entity!].attributes.unit_of_measurement === "kW" ? 1000 : 1);
+              if (!Number.isFinite(w)) return nothing;
+              const p = scene.project(f.x, f.y, 0.75);
+              return html`<button class="power" style="left:${p.left}px; top:${p.top}px" @click=${() => this.ctx.openEntity(f.entity!)}>
+                ${icon(mdiLightningBolt, 13)}${w >= 1000 ? `${(w / 1000).toFixed(1)} kW` : `${Math.round(w)} W`}
+              </button>`;
+            })}
             ${(this.pick ? [] : cameraAlerts(hass, floor)).map((a) => {
               const p = scene.project(a.x, a.y, 0.9);
               // Kept inside the plan: an outdoor camera often sits right at its edge.
@@ -724,6 +733,24 @@ export class SnFloorplan extends LitElement {
       .label.sel {
         background: var(--sn-accent);
         color: #1d1b30;
+      }
+      .power {
+        position: absolute;
+        transform: translate(-50%, -100%);
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        height: 24px;
+        padding: 0 10px;
+        border-radius: 999px;
+        border: 1px solid rgba(255, 210, 120, 0.5);
+        background: rgba(20, 18, 16, 0.7);
+        color: #ffd27a;
+        font: inherit;
+        font-size: 11px;
+        font-variant-numeric: tabular-nums;
+        cursor: pointer;
+        pointer-events: auto;
       }
       .alert {
         position: absolute;
