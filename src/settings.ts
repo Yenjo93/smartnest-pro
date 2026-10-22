@@ -3,6 +3,7 @@ import { html } from "lit";
 import type { Ctx } from "./ctx";
 import { areas, NODE_DOMAINS, entitiesIn } from "./ha";
 import { entityField, entityOptions, multiField, selectField, textField } from "./ui/fields";
+import { doorSheet } from "./popups/door-view";
 
 export function energySettings(ctx: Ctx) {
   ctx.showSheet({
@@ -124,6 +125,16 @@ export function generalSettings(ctx: Ctx) {
         )}
         <h4>${c.t("floor_plan")}</h4>
         ${multiField(c, c.t("hidden_devices"), c.config.plan.hidden, [], (v) => c.update((d) => (d.plan.hidden = v)))}
+        <h4>${c.t("front_door")}</h4>
+        ${entityField(c, c.t("doorbell"), c.config.door?.doorbell, entityOptions(c, ["binary_sensor", "event"]), (v) =>
+          c.update((d) => (d.door = { ...d.door, doorbell: v })),
+        )}
+        ${entityField(c, c.t("door_camera"), c.config.door?.camera, entityOptions(c, ["camera"]), (v) => c.update((d) => (d.door = { ...d.door, camera: v })))}
+        ${entityField(c, c.t("door_open"), c.config.door?.open, entityOptions(c, ["lock", "script", "button", "input_button", "switch"]), (v) =>
+          c.update((d) => (d.door = { ...d.door, open: v })),
+        )}
+        <p style="margin:0;font-size:13px;color:var(--sn-text-dim)">${c.t("door_hint")}</p>
+        <button style="justify-self:start;height:40px;padding:0 18px;border-radius:999px;border:1px solid var(--sn-glass-border);background:rgba(255,255,255,0.08);color:var(--sn-text);font:inherit;font-size:14px;cursor:pointer" @click=${() => c.showSheet({ ...doorSheet(c), back: undefined })}>${c.t("door_test")}</button>
         <h4>${c.t("kiosk_mode")}</h4>
         <label class="field">
           <span>${c.t("kiosk_pin")}</span>

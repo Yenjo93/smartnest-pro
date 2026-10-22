@@ -1,7 +1,7 @@
 // What each room on the plan should show right now, worked out from Home Assistant's state.
 import type { Hass, PlanFloor, ProConfig } from "../types";
 import { domainOf, entitiesIn, isOn, roomInfo } from "../ha";
-import { layoutInRoom } from "./geometry";
+import { inside, layoutInRoom, roomPts } from "./geometry";
 
 const OPENINGS = ["door", "window", "garage_door", "opening"];
 /** Devices that get an icon on the plan. */
@@ -79,6 +79,59 @@ export function placedDevices(hass: Hass, config: ProConfig, floor: PlanFloor): 
       const p = config.plan.devices[id];
       if (p?.floor === floor.id) out.push({ id, x: p.x, y: p.y, roomId: r.id });
     }
+  }
+  return out;
+}
+
+/** A camera on the plan that sees someone right now. */
+export interface CameraAlert {
+  /** The camera piece of furniture. */
+  id: string;
+  camera?: string;
+  /** The room it stands in; none for outdoor cameras. */
+  roomId?: string;
+  x: number;
+  y: number;
+  /** The latest detection snapshot (Frigate's image entity), when there is one. */
+  image?: string;
+  since?: string;
+}
+
+/** A sibling entity of a camera: Frigate's `binary_sensor.<cam>_person_occupancy`, `image.<cam>_person`. */
+function frigateSibling(hass: Hass, cam: string, domain: string, suffix: string): string | undefined {
+  const base = cam.split(".")[1];
+  const named = `${domain}.${base}${suffix}`;
+  if (hass.states[named]) return named;
+  const dev = hass.entities?.[cam]?.device_id;
+  if (!dev) return undefined;
+  return Object.values(hass.entities ?? {}).find((e) => e.device_id === dev && e.entity_id.startsWith(`${domain}.`) && e.entity_id.endsWith(suffix))?.entity_id;
+}
+
+/**
+ * Cameras on this floor that see a person. Outdoor ones (outside every room) always count; indoor ones only
+ * while nobody is home, so the family moving around doesn't light the house up red.
+ */
+export function cameraAlerts(hass: Hass, floor: PlanFloor): CameraAlert[] {
+  const home = Object.keys(hass.states).some((id) => id.startsWith("person.") && hass.states[id].state === "home");
+  const out: CameraAlert[] = [];
+  for (const f of floor.furniture ?? []) {
+    if (f.type !== "camera" || !f.entity) continue;
+    const cam = domainOf(f.entity) === "camera" ? f.entity : undefined;
+    const sensor = cam ? frigateSibling(hass, cam, "binary_sensor", "_person_occupancy") : f.entity;
+    const s = sensor ? hass.states[sensor] : undefined;
+    if (s?.state !== "on") continue;
+    const room = floor.rooms.find((r) => inside(roomPts(r), f.x, f.y));
+    if (room && home) continue;
+    const img = cam ? frigateSibling(hass, cam, "image", "_person") : undefined;
+    out.push({
+      id: f.id,
+      camera: cam,
+      roomId: room?.id,
+      x: f.x,
+      y: f.y,
+      image: img ? (hass.states[img]?.attributes.entity_picture as string | undefined) : undefined,
+      since: s.last_changed,
+    });
   }
   return out;
 }

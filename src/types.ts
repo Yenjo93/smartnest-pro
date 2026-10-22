@@ -112,6 +112,14 @@ export interface ProConfig {
   names?: Record<string, string>;
   /** Per robot vacuum: which floor plan it cleans and each plan room's segment number in the robot's own map. */
   robots?: Record<string, { floor?: string; segments: Record<string, number> }>;
+  /** The front door popup: a doorbell press opens the door camera live on kiosk screens, with Open. */
+  door?: {
+    /** binary_sensor (on while ringing) or event entity (a new event each press). */
+    doorbell?: string;
+    camera?: string;
+    /** What opens the door: a lock, script, button or switch. */
+    open?: string;
+  };
   /** Per page: items taken off it in edit mode (entity ids, or area ids on the Rooms page). */
   pages: Record<string, { hidden?: string[] }>;
 }
