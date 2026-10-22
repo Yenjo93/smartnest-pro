@@ -35,6 +35,7 @@ import { icon } from "./ui/icon";
 import { entitySheet } from "./popups/entity-popup";
 import { doorSheet } from "./popups/door-view";
 import { lightCaps } from "./ui/light-color";
+import { isNight, weatherEntity, weatherIcon } from "./ui/weather";
 
 const hasColour = (attrs?: Record<string, any>) => {
   const c = lightCaps(attrs);
@@ -43,6 +44,7 @@ const hasColour = (attrs?: Record<string, any>) => {
 import "./ui/sheet";
 import "./ui/level";
 import "./ui/pin-pad";
+import "./ui/screensaver";
 import "./plan/floorplan";
 import "./cards/energy-card";
 import "./cards/climate-card";
@@ -68,6 +70,7 @@ const PHONE_MAX = 760;
 const KIOSK_KEY = "sn-kiosk";
 /** Home Assistant's sidebar setting from before kiosk mode, put back when it ends. */
 const KIOSK_DOCK_KEY = "sn-kiosk-dock";
+const SAVER_MS = 2 * 60_000;
 const store = {
   get: (k: string) => {
     try {
@@ -116,6 +119,13 @@ export class SmartNestProPanel extends LitElement {
   @state() private kiosk = kioskFromUrl();
   /** The PIN was entered: editing is open until it's saved or cancelled. */
   @state() private unlocked = false;
+  /** Kiosk screens rest on the screensaver after a while untouched. */
+  @state() private saver = false;
+  private idleTimer?: number;
+  private idle = () => {
+    clearTimeout(this.idleTimer);
+    this.idleTimer = window.setTimeout(() => this.sleep(), SAVER_MS);
+  };
 
   private unsub?: () => void;
   private resize = new ResizeObserver(([e]) => (this.width = e.contentRect.width));
@@ -124,10 +134,14 @@ export class SmartNestProPanel extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.resize.observe(this);
+    for (const ev of ["pointerdown", "keydown", "wheel"]) window.addEventListener(ev, this.idle, { capture: true, passive: true });
+    this.idle();
   }
 
   disconnectedCallback() {
     super.disconnectedCallback();
+    for (const ev of ["pointerdown", "keydown", "wheel"]) window.removeEventListener(ev, this.idle, { capture: true });
+    clearTimeout(this.idleTimer);
     this.resize.disconnect();
     this.unsub?.();
     this.unsub = undefined;
@@ -154,6 +168,8 @@ export class SmartNestProPanel extends LitElement {
     if (prev === undefined || !now || now === prev || !this.kiosk || !this.live) return;
     this.bellSheet = doorSheet(this.ctx());
     this.sheet = this.bellSheet;
+    this.saver = false;
+    this.idle();
     clearTimeout(this.bellTimer);
     this.bellTimer = window.setTimeout(() => {
       if (this.sheet === this.bellSheet) this.sheet = undefined;
@@ -180,6 +196,20 @@ export class SmartNestProPanel extends LitElement {
       store.set(KIOSK_DOCK_KEY, null);
       if (before !== "always_hidden") set(before);
     }
+  }
+
+  /** Off to the screensaver: kiosk screens only, never mid-edit; open popups close (their live video stops). */
+  private sleep() {
+    if (!this.kiosk || this.draft || !this.live) return;
+    if (this.sheet && this.sheet === this.bellSheet) return this.idle();
+    this.sheet = undefined;
+    this.saver = true;
+  }
+
+  private wake() {
+    this.saver = false;
+    this.go("home");
+    this.idle();
   }
 
   private setKiosk(on: boolean) {
@@ -405,6 +435,24 @@ export class SmartNestProPanel extends LitElement {
     });
   }
 
+  /** Temperature and sky now; a tap opens the five-day forecast. */
+  private weatherChip(c: Ctx) {
+    const id = weatherEntity(c);
+    const s = id ? c.hass.states[id] : undefined;
+    if (!id || !s || typeof s.attributes.temperature !== "number") return nothing;
+    return html`<button
+      class="eco wx"
+      @click=${() =>
+        c.showSheet({
+          title: c.t("weather"),
+          icon: weatherIcon(s.state),
+          render: (cc) => html`<sn-weather-view .ctx=${cc} .entity=${id}></sn-weather-view>`,
+        })}
+    >
+      <span class="leaf">${icon(weatherIcon(s.state, isNight(c.hass)), 18)}</span>${Math.round(s.attributes.temperature)}°
+    </button>`;
+  }
+
   private ecoChip(c: Ctx) {
     const id = c.config.home.solar_power;
     if (!id) return nothing;
@@ -625,7 +673,7 @@ export class SmartNestProPanel extends LitElement {
                 ? html`<button class="round" aria-label=${c.t("open_menu")} @click=${() =>
                     this.dispatchEvent(new CustomEvent("hass-toggle-menu", { bubbles: true, composed: true }))}>${icon(mdiMenu)}</button>`
                 : nothing}
-              ${this.greeting(c)} ${this.ecoChip(c)}
+              ${this.greeting(c)} ${this.weatherChip(c)} ${this.ecoChip(c)}
               ${this.kiosk ? html`<span class="spacer"></span>${this.lockButton(c)}` : nothing}
             </header>
             <main>${this.animated(page)}</main>
@@ -640,7 +688,7 @@ export class SmartNestProPanel extends LitElement {
               <span>${c.config.settings.title || "SmartNest"}</span>
             </div>
             <header class="top">
-              ${this.search(c)} ${this.ecoChip(c)}
+              ${this.search(c)} ${this.weatherChip(c)} ${this.ecoChip(c)}
               <span class="spacer"></span>
               ${this.editControls(c)}
             </header>
@@ -658,6 +706,7 @@ export class SmartNestProPanel extends LitElement {
           </div>`}
       <sn-sheet .spec=${this.sheet} .ctx=${c} ?phone=${this.phone} @close=${() => (this.sheet = this.sheet?.back)}></sn-sheet>
       ${this.toastMsg ? html`<div class="toast glass">${this.toastMsg}</div>` : nothing}
+      ${this.saver ? html`<sn-screensaver .ctx=${c} @wake=${() => this.wake()}></sn-screensaver>` : nothing}
     `;
   }
 
@@ -814,6 +863,17 @@ export class SmartNestProPanel extends LitElement {
         border-radius: 50%;
         background: rgba(255, 255, 255, 0.18);
         border: 1px solid rgba(255, 255, 255, 0.35);
+      }
+      .wx {
+        cursor: pointer;
+        font: inherit;
+        font-size: 15px;
+      }
+      .wx .leaf {
+        color: #ffd27a;
+      }
+      :host(:not([dark])) .wx .leaf {
+        color: #b9771a;
       }
       .eco.lit .leaf {
         background: rgba(181, 220, 143, 0.35);

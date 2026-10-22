@@ -115,6 +115,7 @@ export function generalSettings(ctx: Ctx) {
         ${selectField(c.t("default_room"), s.default_room ?? "", [["", c.t("none")], ...areas(c.hass).map((a) => [a.area_id, a.name] as [string, string])], (v) =>
           c.update((d) => (d.settings.default_room = v || undefined)),
         )}
+        ${entityField(c, c.t("weather"), c.config.home.weather, entityOptions(c, ["weather"]), (v) => c.update((d) => (d.home.weather = v)))}
         <h4>${c.t("energy_usage")}</h4>
         ${entityField(c, c.t("energy_meter"), c.config.home.energy, entityOptions(c, ["sensor"], ["energy"]), (v) => c.update((d) => (d.home.energy = v)))}
         ${entityField(c, c.t("solar_power"), c.config.home.solar_power, entityOptions(c, ["sensor"], ["power"]), (v) =>

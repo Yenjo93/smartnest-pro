@@ -67,6 +67,7 @@ export const CATALOG: CatalogItem[] = [
   it("door_smart", "smart", "Door", "باب", I.mdiDoor, 0.95, 0.12, { domains: ["lock", "binary_sensor"] }),
   it("garage_door", "smart", "Garage door", "باب كراج", I.mdiGarageVariant, 2.6, 0.12, { domains: ["cover"] }),
   it("camera", "smart", "Security camera", "كاميرا مراقبة", I.mdiCctv, 0.18, 0.18, { domains: ["camera", "binary_sensor"], z: 0.85 }),
+  it("electric_panel", "smart", "Electric panel", "لوحة كهربا", I.mdiLightningBoltCircle, 0.4, 0.12, { domains: ["sensor"], z: 0.45 }),
   it("doorbell", "smart", "Video doorbell", "جرس بكاميرا", I.mdiDoorbellVideo, 0.1, 0.05, { domains: ["binary_sensor", "camera", "event"], z: 0.45 }),
   it("thermostat", "smart", "Thermostat", "ترموستات", I.mdiThermostat, 0.14, 0.04, { domains: ["climate"], z: 0.5 }),
   it("smoke_detector", "smart", "Smoke detector", "حساس دخان", I.mdiSmokeDetector, 0.16, 0.16, { domains: ["binary_sensor"], mount: "ceiling" }),

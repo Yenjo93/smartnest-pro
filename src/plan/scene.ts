@@ -401,8 +401,15 @@ export class PlanScene {
     }
     if (this.anim) return;
     this.clock.getDelta();
-    const loop = () => {
-      const dt = Math.min(0.05, this.clock.getDelta());
+    let last = 0;
+    const loop = (now: number) => {
+      // 30 fps is plenty for spinning fans and flowing power, and halves the work on a wall tablet that's on all day.
+      if (now - last < 32) {
+        this.anim = requestAnimationFrame(loop);
+        return;
+      }
+      last = now;
+      const dt = Math.min(0.08, this.clock.getDelta());
       const t = this.clock.elapsedTime;
       let any = false;
       for (const { piece } of this.pieces.values())
