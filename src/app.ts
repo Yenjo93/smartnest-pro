@@ -147,6 +147,7 @@ export class SmartNestProPanel extends LitElement {
   private pendingActions = new Map<string, Promise<unknown>>();
   private failedAction?: () => Promise<unknown>;
   private draftTimer?: number;
+  private layoutQueue: Promise<void> = Promise.resolve();
   private setupRequest = () => { if (this.hass?.user?.is_admin && !this.previewConfig) { this.setupOpen = true; this.sheet = undefined; } };
   private preferencesChanged = () => this.requestUpdate();
   private draftKey() { return `smartnest.draft.v1.${this.hass?.user?.id ?? 'guest'}`; }
@@ -580,16 +581,23 @@ export class SmartNestProPanel extends LitElement {
       this.persistDraft();
       return;
     }
-    const next = clone(this.config!);
-    apply(next);
-    const t = translator(resolveLang(next.settings.language, this.hass!.language ?? "en"));
-    try {
-      await this.hass!.callWS({ type: "smartnest_pro/config/save", config: next });
-      this.config = next;
-      this.toast(t("saved"));
-    } catch {
-      this.toast(t("save_failed"));
-    }
+    const work = this.layoutQueue.then(async () => {
+      if (!this.config || !this.hass || !this.isConnected) return;
+      const next = clone(this.config);
+      apply(next);
+      const t = translator(resolveLang(next.settings.language, this.hass.language ?? "en"));
+      try {
+        await this.hass.callWS({ type: "smartnest_pro/config/save", config: next });
+        this.config = next;
+        this.toast(t("saved"));
+      } catch (error) {
+        this.toast(t("save_failed"));
+        throw error;
+      }
+    });
+    // Preserve independent quick edits and keep unawaited UI handlers from losing later saves.
+    this.layoutQueue = work.catch(() => {});
+    return work;
   }
 
   private toast(message: string) {
