@@ -62,6 +62,8 @@ import "./pages/media-page";
 
 installFonts();
 
+type LicenseStatus = { valid: boolean; reason: string };
+
 type Page = "home" | "rooms" | "climate" | "lights" | "robot" | "family" | "energy" | "security" | "media";
 /** Phone tab bar: these first, the rest under "More". */
 const PHONE_TABS: Page[] = ["home", "rooms", "climate", "lights"];
@@ -127,6 +129,14 @@ export class SmartNestProPanel extends LitElement {
     this.idleTimer = window.setTimeout(() => this.sleep(), SAVER_MS);
   };
 
+  @state() private licenseValid?: boolean;
+  private licenseUnsub?: () => void;
+  private licenseTimer?: number;
+  private checkingLicense = false;
+  private loadingConfig = false;
+  private lifecycle = 0;
+  private configCycle = 0;
+  private licenseRevision = 0;
   private unsub?: () => void;
   private resize = new ResizeObserver(([e]) => (this.width = e.contentRect.width));
   private toastTimer?: number;
@@ -134,6 +144,8 @@ export class SmartNestProPanel extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.resize.observe(this);
+    this.licenseTimer = window.setInterval(() => void this.checkLicense(), 60_000);
+    if (this.hass) void this.checkLicense();
     for (const ev of ["pointerdown", "keydown", "wheel"]) window.addEventListener(ev, this.idle, { capture: true, passive: true });
     this.idle();
   }
@@ -142,13 +154,23 @@ export class SmartNestProPanel extends LitElement {
     super.disconnectedCallback();
     for (const ev of ["pointerdown", "keydown", "wheel"]) window.removeEventListener(ev, this.idle, { capture: true });
     clearTimeout(this.idleTimer);
+    clearTimeout(this.bellTimer);
+    clearInterval(this.licenseTimer);
+    this.lifecycle++;
+    this.configCycle++;
+    this.checkingLicense = false;
+    this.loadingConfig = false;
+    this.licenseUnsub?.();
+    this.licenseUnsub = undefined;
+    this.licenseValid = undefined;
+    this.config = undefined;
     this.resize.disconnect();
     this.unsub?.();
     this.unsub = undefined;
   }
 
   protected willUpdate(changed: Map<string, unknown>) {
-    if (changed.has("hass") && this.hass && !this.config && !this.loadError) this.load();
+    if (changed.has("hass") && this.hass && this.licenseValid === undefined) void this.checkLicense();
     if (changed.has("hass")) this.checkDoorbell();
   }
 
@@ -177,7 +199,7 @@ export class SmartNestProPanel extends LitElement {
   }
 
   protected updated(changed: Map<string, unknown>) {
-    if (changed.has("kiosk") || (changed.has("hass") && !changed.get("hass"))) this.applySidebar();
+    if (changed.has("kiosk") || changed.has("licenseValid") || (changed.has("hass") && !changed.get("hass"))) this.applySidebar();
   }
 
   /** Hides Home Assistant's sidebar on this screen in kiosk mode (its own "always hidden" setting), and puts the
@@ -186,7 +208,7 @@ export class SmartNestProPanel extends LitElement {
     const dock = (this.hass as (Hass & { dockedSidebar?: string }) | undefined)?.dockedSidebar;
     if (!this.hass) return;
     const set = (d: string) => this.dispatchEvent(new CustomEvent("hass-dock-sidebar", { bubbles: true, composed: true, detail: { dock: d } }));
-    if (this.kiosk) {
+    if (this.kiosk && this.licenseValid === true) {
       if (dock === "always_hidden") return;
       if (store.get(KIOSK_DOCK_KEY) === null) store.set(KIOSK_DOCK_KEY, dock ?? "docked");
       set("always_hidden");
@@ -247,20 +269,111 @@ export class SmartNestProPanel extends LitElement {
     };
   }
 
+  /** Bound every request so a lost HA connection cannot leave an open dashboard active. */
+  private async licenseRequest<T>(request: Promise<T>): Promise<T> {
+    let timer: number | undefined;
+    try {
+      return await Promise.race([
+        request,
+        new Promise<never>((_, reject) => {
+          timer = window.setTimeout(() => reject(new Error("License status unavailable")), 10_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private acceptLicense(status: LicenseStatus) {
+    const valid = status.valid === true;
+    this.licenseValid = valid;
+    if (!valid) {
+      this.configCycle++;
+      this.loadingConfig = false;
+      this.unsub?.();
+      this.unsub = undefined;
+      this.config = undefined;
+      this.draft = undefined;
+      this.sheet = undefined;
+      this.bellSheet = undefined;
+      this.saver = false;
+      this.unlocked = false;
+      clearTimeout(this.bellTimer);
+      this.loadError = undefined;
+    } else if (!this.config) {
+      void this.load();
+    }
+  }
+
+  private async checkLicense() {
+    if (!this.hass || !this.isConnected || this.checkingLicense) return;
+    this.checkingLicense = true;
+    const cycle = this.lifecycle;
+    const current = () => this.isConnected && cycle === this.lifecycle;
+    try {
+      if (!this.licenseUnsub) {
+        // Keep subscription acquisition separate from the timeout: a late result still gets cleaned up.
+        let accepted = true;
+        const pending = this.hass.connection.subscribeMessage<LicenseStatus>(
+          (status) => {
+            if (accepted && current()) {
+              this.licenseRevision++;
+              this.acceptLicense(status);
+            }
+          },
+          { type: "smartnest_pro/license/subscribe" },
+        );
+        pending.then((unsub) => {
+          if (!accepted || !current()) unsub();
+        }, () => {});
+        try {
+          const unsub = await this.licenseRequest(pending);
+          if (!current()) { unsub(); return; }
+          this.licenseUnsub = unsub;
+        } catch (error) {
+          accepted = false;
+          throw error;
+        }
+      }
+      const revision = this.licenseRevision;
+      const status = await this.licenseRequest(this.hass.callWS<LicenseStatus>({ type: "smartnest_pro/license/status" }));
+      if (current() && revision === this.licenseRevision) this.acceptLicense(status);
+    } catch {
+      if (current()) {
+        this.licenseUnsub?.();
+        this.licenseUnsub = undefined;
+        this.acceptLicense({ valid: false, reason: "unavailable" });
+      }
+    } finally {
+      if (current()) this.checkingLicense = false;
+    }
+  }
+
   private async load() {
-    const hass = this.hass!;
+    if (this.licenseValid !== true) return void this.checkLicense();
+    if (this.loadingConfig || !this.hass || !this.isConnected) return;
+    this.loadingConfig = true;
+    const hass = this.hass;
+    const cycle = ++this.configCycle;
+    const current = () => this.isConnected && cycle === this.configCycle && this.licenseValid === true;
     this.loadError = "";
     try {
-      const res = await hass.callWS<{ config: unknown }>({ type: "smartnest_pro/config/get" });
+      const res = await this.licenseRequest(hass.callWS<{ config: unknown }>({ type: "smartnest_pro/config/get" }));
+      if (!current()) return;
       this.config = normalize(res.config);
-      this.unsub = await hass.connection.subscribeMessage<{ config: unknown }>(
+      this.unsub?.();
+      const unsub = await hass.connection.subscribeMessage<{ config: unknown }>(
         (msg) => {
-          if (!this.draft) this.config = normalize(msg.config);
+          if (current() && !this.draft) this.config = normalize(msg.config);
         },
         { type: "smartnest_pro/config/subscribe" },
       );
+      if (!current()) unsub();
+      else this.unsub = unsub;
     } catch (err: any) {
-      this.loadError = err?.message ?? "SmartNest failed to load";
+      if (current()) this.loadError = err?.message ?? "SmartNest failed to load";
+    } finally {
+      if (current()) this.loadingConfig = false;
     }
   }
 
@@ -269,7 +382,7 @@ export class SmartNestProPanel extends LitElement {
   }
 
   private get live(): ProConfig | undefined {
-    return this.draft ?? this.config;
+    return this.licenseValid === true ? this.draft ?? this.config : undefined;
   }
 
   private defaultRoom(cfg: ProConfig): string | undefined {
@@ -649,6 +762,18 @@ export class SmartNestProPanel extends LitElement {
   }
 
   render() {
+    if (this.licenseValid === false) {
+      const ar = resolveLang("auto", this.hass?.language ?? "en") === "ar";
+      return html`<div class="center" dir=${ar ? "rtl" : "ltr"} style="padding:24px;text-align:center;gap:16px;flex-direction:column">
+        <strong>${ar ? "يلزم تفعيل SmartNest" : "SmartNest activation required"}</strong>
+        <p>${this.hass?.user?.is_admin
+          ? ar ? "تحقّق من الاتصال، ثم افتح الإعدادات ← الأجهزة والخدمات ← SmartNest ← إعادة التهيئة لإدخال الترخيص."
+            : "Check your connection, then open Settings → Devices & services → SmartNest → Reconfigure to enter your license."
+          : ar ? "تواصل مع مسؤول المنزل للتحقق من الاتصال وترخيص SmartNest." : "Contact your home administrator to check the connection and SmartNest license."}</p>
+        <button class="pill" @click=${() => void this.checkLicense()}>${ar ? "إعادة المحاولة" : "Retry"}</button>
+        <a href="/config/integrations/integration/smartnest_pro">${ar ? "إعدادات الإضافة" : "Integration settings"}</a>
+      </div>`;
+    }
     if (this.loadError) return html`<div class="center">${this.loadError}<button class="pill" @click=${() => this.load()}>↻</button></div>`;
     if (!this.hass || !this.live) return html`<div class="center"><div class="spinner"></div></div>`;
     const c = this.ctx();

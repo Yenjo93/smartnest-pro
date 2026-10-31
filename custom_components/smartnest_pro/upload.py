@@ -10,7 +10,7 @@ from aiohttp import web
 from homeassistant.components.http import KEY_HASS_USER, HomeAssistantView
 from homeassistant.core import HomeAssistant
 
-from .const import FILES_URL, MAX_UPLOAD_BYTES
+from .const import DOMAIN, FILES_URL, MAX_UPLOAD_BYTES
 
 # Raster formats only. SVG is refused: served from HA's own origin it could carry script.
 _SIGNATURES: list[tuple[bytes, str]] = [
@@ -43,6 +43,10 @@ class SmartNestProUploadView(HomeAssistantView):
         user = request[KEY_HASS_USER]
         if not user.is_admin:
             return self.json_message("Admin only", HTTPStatus.FORBIDDEN)
+
+        manager = self._hass.data.get(DOMAIN, {}).get("license")
+        if manager is None or not manager.valid:
+            return self.json_message("Activate SmartNest in integration settings", HTTPStatus.FORBIDDEN)
 
         reader = await request.multipart()
         field = await reader.next()
