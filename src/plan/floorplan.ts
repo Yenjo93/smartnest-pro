@@ -26,7 +26,7 @@ import type { PlanFloor } from "../types";
 import { shared } from "../styles";
 import { entityIcon, icon } from "../ui/icon";
 import { noMenu, onHold, hasLevel } from "../ui/hold";
-import { domainOf, isOn, nameOf, since, toggle } from "../ha";
+import { domainOf, entitiesIn, isOn, nameOf, since, toggle } from "../ha";
 import { WALL_H, bounds, innerPoint, roomAt, roomPts } from "./geometry";
 import { cameraAlerts, placedDevices, roomLive, type RoomLive } from "./live";
 import type { Mark } from "./scene";
@@ -96,7 +96,43 @@ export class SnFloorplan extends LitElement {
   @state() private tapZoom = readPref("sn-plan-tapzoom") === "1";
   @state() private view: ViewKey = ((readPref("sn-plan-view") as ViewKey) in VIEW_ANGLES ? readPref("sn-plan-view") : "normal") as ViewKey;
   @state() private viewMenu = false;
+  @state() private flat: boolean | undefined = readPref("sn-plan-flat") === null ? undefined : readPref("sn-plan-flat") === "1";
   private lastHass?: unknown;
+
+  private get isFlat() {
+    return this.flat ?? (this.ctx.config.settings as { plan_view?: string }).plan_view === "2d";
+  }
+
+  private get lightQuality() {
+    const settings = this.ctx.config.settings as typeof this.ctx.config.settings & { performance?: string };
+    if (settings.reduce_effects || settings.performance === "light") return true;
+    if (settings.performance === "high") return false;
+    const memory = (navigator as Navigator & { deviceMemory?: number }).deviceMemory;
+    return (typeof memory === "number" && memory <= 4) || (navigator.hardwareConcurrency > 0 && navigator.hardwareConcurrency <= 4);
+  }
+
+  private text(ar: string, en: string) { return this.ctx.lang === "ar" ? ar : en; }
+
+  private summaryHass?: unknown;
+  private summaryConfig?: unknown;
+  private summaryCache = new Map<string, string>();
+
+  private floorSummary(floor: PlanFloor) {
+    if (this.summaryHass !== this.ctx.hass || this.summaryConfig !== this.ctx.config) {
+      this.summaryHass = this.ctx.hass;
+      this.summaryConfig = this.ctx.config;
+      this.summaryCache.clear();
+    }
+    const cached = this.summaryCache.get(floor.id);
+    if (cached !== undefined) return cached;
+    const lives = this.lives(floor);
+    const occupied = lives.filter(live => live.occupied).length;
+    const ids = new Set(floor.rooms.flatMap(room => room.area ? entitiesIn(this.ctx.hass, room.area, this.ctx.config.rooms[room.area]?.hidden) : []));
+    const lights = [...ids].filter(id => domainOf(id) === "light" && isOn(this.ctx.hass.states[id])).length;
+    const summary = this.text(`${occupied} غرف مشغولة · ${lights} أضواء`, `${occupied} occupied · ${lights} lights`);
+    this.summaryCache.set(floor.id, summary);
+    return summary;
+  }
   /** The room the camera is zoomed into, if any. */
   private focusRoom?: string;
   /** Where the ring sits when it was opened from a piece of furniture. */
@@ -124,7 +160,7 @@ export class SnFloorplan extends LitElement {
     this.loading = import("./scene")
       .then(({ PlanScene }) => {
         if (!this.isConnected) return;
-        const scene = new PlanScene(host, this.ctx.palette, !this.ctx.config.settings.reduce_effects);
+        const scene = new PlanScene(host, this.ctx.palette, true);
         scene.onRender = () => this.requestUpdate();
         // TVs show what's on them on the Home plan, not in the robot's room picker.
         if (!this.pick) scene.hass = () => this.ctx.hass;
@@ -154,12 +190,14 @@ export class SnFloorplan extends LitElement {
     const scene = this.scene;
     const floor = this.floor;
     if (!scene || !floor) return;
+    scene.setQuality(this.lightQuality);
+    scene.setFlatView(this.isFlat);
     if (this.palette !== this.ctx.palette) {
       this.palette = this.ctx.palette;
       scene.setPalette(this.ctx.palette);
       this.builtKey = "";
     }
-    const key = JSON.stringify([floor.id, floor.rooms, floor.doors, floor.furniture, floor.wallHeight]);
+    const key = JSON.stringify([floor.id, floor.rooms, floor.doors, floor.furniture, floor.walls, floor.wallHeight]);
     if (key !== this.builtKey) {
       this.builtKey = key;
       this.effectsKey = "";
@@ -489,7 +527,7 @@ export class SnFloorplan extends LitElement {
 
     return html`
       <div class="canvas" @contextmenu=${(e: Event) => e.preventDefault()} @pointerdown=${this.down} @pointermove=${this.move} @pointerup=${this.up} @pointercancel=${this.up} @wheel=${this.wheel}>
-        ${this.failed ? html`<div class="empty">${t("plan_failed")}</div>` : nothing}
+        ${this.failed ? html`<div class="empty">${t("plan_failed")}</div>` : !scene ? html`<div class="plan-loading" role="status"><svg viewBox="${b.x - 1} ${b.y - 1} ${b.w + 2} ${b.h + 2}" aria-hidden="true">${floor.rooms.map(room => svg`<polygon points=${roomPts(room).map(point => `${point.x},${point.y}`).join(" ")}></polygon>`)}</svg><span>${this.text("عم نجهّز مخطط بيتك…", "Preparing your home plan…")}</span></div>` : nothing}
       </div>
       ${scene
         ? html`<div class="overlay">
@@ -504,6 +542,10 @@ export class SnFloorplan extends LitElement {
                 <b>${name}</b>
                 ${live?.temperature !== undefined ? html`<span>${live.temperature.toFixed(1)}°</span>` : nothing}
               </div>`;
+            })}
+            ${(floor.furniture ?? []).filter(piece => (piece as typeof piece & { label?: string }).label).map(piece => {
+              const position = scene.project(piece.x, piece.y, (piece.z ?? 0) + 0.1);
+              return html`<span class="piece-label" style="left:${position.left}px;top:${position.top}px">${(piece as typeof piece & { label?: string }).label}</span>`;
             })}
             ${floor.rooms.map((r) => {
               const live = lives.get(r.id);
@@ -579,12 +621,13 @@ export class SnFloorplan extends LitElement {
       ${floors.length > 1 && !this.fixedFloor
         ? html`<div class="ui floors ${this.ctx.phone ? "top" : ""}">
             ${floors.map(
-              (f) => html`<button class=${f.id === floor.id ? "on" : ""} @click=${() => ((this.floorId = f.id), (this.ring = undefined))}>${f.name}</button>`,
+              (f) => html`<button class=${f.id === floor.id ? "on" : ""} title=${this.floorSummary(f)} @click=${() => ((this.floorId = f.id), (this.ring = undefined))}><span>${f.name}</span><small>${this.floorSummary(f)}</small></button>`,
             )}
           </div>`
         : nothing}
 
       <div class="ui tools">
+        <button class="tool" aria-pressed=${this.isFlat} title=${this.text("تبديل عرض المخطط", "Switch plan view")} @click=${() => { this.flat = !this.isFlat; writePref("sn-plan-flat", this.flat ? "1" : "0"); this.scene?.setFlatView(this.flat); }}>${this.isFlat ? "2D" : "3D"}</button>
         ${editing && !this.pick
           ? html`<div class="walls" title=${t("wall_height")}>
                 <button aria-label="−" @click=${() => this.bumpWalls(floor.id, -0.1)}>−</button>
@@ -606,7 +649,7 @@ export class SnFloorplan extends LitElement {
         >
           ${icon(mdiCrosshairsGps, 20)}
         </button>`}
-        <div class="view-wrap">
+        <div class="view-wrap" ?hidden=${this.isFlat}>
           <button class="tool ${this.viewMenu ? "on" : ""}" aria-label=${t("view")} title=${t("view")} @click=${() => (this.viewMenu = !this.viewMenu)}>
             ${icon(mdiEyeOutline, 20)}
           </button>
@@ -619,7 +662,7 @@ export class SnFloorplan extends LitElement {
                       this.view = k;
                       this.viewMenu = false;
                       writePref("sn-plan-view", k);
-                      this.scene?.setElevation(VIEW_ANGLES[k]);
+                      this.scene?.setElevation(VIEW_ANGLES[k], !this.ctx.config.settings.reduce_effects);
                     }}
                   >
                     <span class="angle" style="--a:${VIEW_ANGLES[k]}deg"></span>${t(`view_${k}` as const)}
@@ -628,8 +671,8 @@ export class SnFloorplan extends LitElement {
               </div>`
             : nothing}
         </div>
-        <button class="tool" aria-label=${t("rotate_left")} title=${t("rotate_left")} @click=${() => this.rotate(-45)}>${icon(mdiRotateLeft, 20)}</button>
-        <button class="tool" aria-label=${t("rotate_right")} title=${t("rotate_right")} @click=${() => this.rotate(45)}>${icon(mdiRotateRight, 20)}</button>
+        <button class="tool" ?hidden=${this.isFlat} aria-label=${t("rotate_left")} title=${t("rotate_left")} @click=${() => this.rotate(-45)}>${icon(mdiRotateLeft, 20)}</button>
+        <button class="tool" ?hidden=${this.isFlat} aria-label=${t("rotate_right")} title=${t("rotate_right")} @click=${() => this.rotate(45)}>${icon(mdiRotateRight, 20)}</button>
         <button class="tool" aria-label="zoom in" @click=${() => scene?.zoomBy(1.25)}>${icon(mdiMagnifyPlusOutline, 20)}</button>
         <button class="tool" aria-label="zoom out" @click=${() => scene?.zoomBy(0.8)}>${icon(mdiMagnifyMinusOutline, 20)}</button>
         <button class="tool" aria-label="fit" @click=${() => scene?.reset(floor)}>${icon(mdiFitToScreenOutline, 20)}</button>
@@ -1024,6 +1067,11 @@ export class SnFloorplan extends LitElement {
         z-index: 4;
       }
       /* Beside the minimap, leaving the bottom-right for the (longer, in edit mode) toolbar. */
+      .piece-label { position: absolute; transform: translate(-50%, 12px); color: var(--sn-text); background: var(--sn-bg, #26232c); border: 1px solid var(--sn-glass-border); border-radius: 7px; padding: 3px 6px; font-size: 10px; pointer-events: none; white-space: nowrap; }
+      .plan-loading { position: absolute; inset: 0; display: grid; place-items: center; padding: 36px; color: var(--sn-text-dim); font-size: 12px; pointer-events: none; }
+      .plan-loading svg { width: 100%; height: 80%; fill: color-mix(in srgb, var(--sn-accent) 12%, transparent); stroke: var(--sn-text-dim); stroke-width: .05; }
+      .floors small { display: block; font-size: 9px; font-weight: 400; opacity: .75; margin-top: 3px; }
+      [hidden] { display: none !important; }
       .floors {
         bottom: 12px;
         inset-inline-start: 136px;

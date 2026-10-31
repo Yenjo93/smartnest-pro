@@ -10,11 +10,12 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components import websocket_api
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import HomeAssistant, Context, callback
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
 from homeassistant.helpers.event import async_call_later
 
 from .const import DOMAIN, MAX_CONFIG_BYTES, SIGNAL_CONFIG_UPDATED
+from .platform import ActionDenied, config_for_user, entity_allowed, user_policy, validate_access
 
 
 def require_license(func):
@@ -62,6 +63,8 @@ def ws_license_subscribe(hass, connection, msg):
 
 @callback
 def async_register_commands(hass: HomeAssistant) -> None:
+    for command in (ws_access_get, ws_preferences_get, ws_preferences_save, ws_config_history, ws_action, ws_activity_list, ws_schedule_add, ws_schedule_list, ws_schedule_cancel):
+        websocket_api.async_register_command(hass, command)
     websocket_api.async_register_command(hass, ws_license_status)
     websocket_api.async_register_command(hass, ws_license_subscribe)
     websocket_api.async_register_command(hass, ws_get_config)
@@ -81,7 +84,7 @@ def ws_get_config(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     if data is None:
         connection.send_error(msg["id"], "not_loaded", "SmartNest is not set up")
         return
-    connection.send_result(msg["id"], {"config": data["config"]})
+    connection.send_result(msg["id"], {"config": config_for_user(hass, data["config"], connection.user)})
 
 
 @websocket_api.require_admin
@@ -103,8 +106,10 @@ async def ws_save_config(hass: HomeAssistant, connection: websocket_api.ActiveCo
     if not isinstance(config.get("hero"), dict) or not isinstance(config.get("settings"), dict):
         connection.send_error(msg["id"], "invalid_format", "Layout is malformed")
         return
-    await data["store"].async_save(config)
-    data["config"] = config
+    if not validate_access(config):
+        connection.send_error(msg["id"], "invalid_format", "Access settings are malformed")
+        return
+    await data["platform"].async_save_config(config)
     async_dispatcher_send(hass, SIGNAL_CONFIG_UPDATED, config)
     connection.send_result(msg["id"])
 
@@ -119,7 +124,7 @@ def ws_subscribe_config(hass: HomeAssistant, connection: websocket_api.ActiveCon
     def forward(config: dict[str, Any]) -> None:
         manager = hass.data.get(DOMAIN, {}).get("license")
         if manager and manager.valid:
-            connection.send_message(websocket_api.event_message(msg["id"], {"config": config}))
+            connection.send_message(websocket_api.event_message(msg["id"], {"config": config_for_user(hass, config, connection.user)}))
 
     connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, SIGNAL_CONFIG_UPDATED, forward)
     connection.send_result(msg["id"])
@@ -150,6 +155,9 @@ def _cancel(hass: HomeAssistant, entity_id: str) -> None:
 @require_license
 def ws_timer_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     entity_id = msg["entity_id"]
+    if not entity_allowed(hass, hass.data[DOMAIN].get("config"), connection.user, entity_id, True):
+        connection.send_error(msg["id"], "unauthorized", "You cannot control this device")
+        return
     if hass.states.get(entity_id) is None:
         connection.send_error(msg["id"], "not_found", "Unknown entity")
         return
@@ -158,7 +166,9 @@ def ws_timer_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 
     async def fire(_now: Any) -> None:
         _timers(hass).pop(entity_id, None)
-        await hass.services.async_call("homeassistant", "turn_off", {"entity_id": entity_id}, blocking=False)
+        user = await hass.auth.async_get_user(connection.user.id)
+        if user and user.is_active and entity_allowed(hass, hass.data.get(DOMAIN, {}).get("config"), user, entity_id, True):
+            await hass.services.async_call("homeassistant", "turn_off", {"entity_id": entity_id}, blocking=False, context=Context(user_id=user.id))
 
     _timers(hass)[entity_id] = (async_call_later(hass, delay, fire), time.time() + delay)
     connection.send_result(msg["id"])
@@ -168,6 +178,9 @@ def ws_timer_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 @callback
 @require_license
 def ws_timer_cancel(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    if not entity_allowed(hass, hass.data[DOMAIN].get("config"), connection.user, msg["entity_id"], True):
+        connection.send_error(msg["id"], "unauthorized", "You cannot control this device")
+        return
     _cancel(hass, msg["entity_id"])
     connection.send_result(msg["id"])
 
@@ -178,4 +191,114 @@ def ws_timer_cancel(hass: HomeAssistant, connection: websocket_api.ActiveConnect
 def ws_timer_list(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """Seconds left per entity."""
     now = time.time()
-    connection.send_result(msg["id"], {eid: max(0, round(ends - now)) for eid, (_h, ends) in _timers(hass).items()})
+    connection.send_result(msg["id"], {eid: max(0, round(ends - now)) for eid, (_h, ends) in _timers(hass).items() if entity_allowed(hass, hass.data[DOMAIN].get("config"), connection.user, eid, True)})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/access/get"})
+@callback
+@require_license
+def ws_access_get(hass, connection, msg):
+    policy = user_policy(hass.data[DOMAIN].get("config"), connection.user)
+    expired = bool(policy and policy.get("expired"))
+    connection.send_result(msg["id"], {
+        "restricted": policy is not None,
+        "areas": [] if policy is None or expired else policy.get("areas", []),
+        "entities": [] if policy is None or expired else policy.get("entities", []),
+        "guest_expired": expired,
+        "guest_until": (hass.data[DOMAIN].get("config") or {}).get("access", {}).get("users", {}).get(connection.user.id, {}).get("guest_until") if not connection.user.is_admin else None,
+    })
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/config/history"})
+@callback
+@require_license
+def ws_config_history(hass, connection, msg):
+    connection.send_result(msg["id"], {"versions": list(reversed(hass.data[DOMAIN]["platform"].history))})
+
+
+@websocket_api.websocket_command({
+    vol.Required("type"): "smartnest_pro/action",
+    vol.Required("domain"): str, vol.Required("service"): str, vol.Required("data"): dict,
+})
+@websocket_api.async_response
+@require_license
+async def ws_action(hass, connection, msg):
+    if len(json.dumps(msg["data"])) > 16384:
+        connection.send_error(msg["id"], "too_large", "Action is too large")
+        return
+    try:
+        await hass.data[DOMAIN]["platform"].action(connection.user, msg["domain"], msg["service"], msg["data"])
+    except ActionDenied as err:
+        connection.send_error(msg["id"], "unauthorized", str(err))
+    except Exception:
+        connection.send_error(msg["id"], "action_failed", "The device did not complete the action")
+    else:
+        connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/activity/list"})
+@callback
+@require_license
+def ws_activity_list(hass, connection, msg):
+    connection.send_result(msg["id"], {"events": list(reversed(hass.data[DOMAIN]["platform"].events))})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({
+    vol.Required("type"): "smartnest_pro/schedule/add",
+    vol.Required("entity_id"): str, vol.Required("at"): str,
+})
+@websocket_api.async_response
+@require_license
+async def ws_schedule_add(hass, connection, msg):
+    try:
+        row = await hass.data[DOMAIN]["platform"].add_schedule(connection.user, msg["entity_id"], msg["at"])
+    except (ValueError, OverflowError) as err:
+        connection.send_error(msg["id"], "invalid_schedule", str(err))
+    else:
+        connection.send_result(msg["id"], row)
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/schedule/list"})
+@callback
+@require_license
+def ws_schedule_list(hass, connection, msg):
+    connection.send_result(msg["id"], {"schedules": hass.data[DOMAIN]["platform"].schedules})
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/schedule/cancel", vol.Required("id"): str})
+@websocket_api.async_response
+@require_license
+async def ws_schedule_cancel(hass, connection, msg):
+    await hass.data[DOMAIN]["platform"].remove_schedule(msg["id"])
+    connection.send_result(msg["id"], {"success": True})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/preferences/get"})
+@callback
+@require_license
+def ws_preferences_get(hass, connection, msg):
+    try:
+        preferences = hass.data[DOMAIN]["platform"].get_preferences(connection.user)
+    except ActionDenied as err:
+        connection.send_error(msg["id"], "unauthorized", str(err))
+    else:
+        connection.send_result(msg["id"], {"preferences": preferences})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/preferences/save", vol.Required("preferences"): dict})
+@websocket_api.async_response
+@require_license
+async def ws_preferences_save(hass, connection, msg):
+    try:
+        await hass.data[DOMAIN]["platform"].save_preferences(connection.user, msg["preferences"])
+    except ActionDenied as err:
+        connection.send_error(msg["id"], "unauthorized", str(err))
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_preferences", str(err))
+    else:
+        connection.send_result(msg["id"], {"success": True})

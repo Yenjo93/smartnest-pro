@@ -74,9 +74,9 @@ async function validate(data, db) {
   // One atomic statement authorizes and binds together: concurrent installations cannot both win.
   const row = await db.prepare(`UPDATE licenses SET installation_id=COALESCE(installation_id,?1)
     WHERE key_hash=?2 AND revoked=0 AND (expires_at IS NULL OR expires_at>?3)
-    AND (installation_id IS NULL OR installation_id=?1) RETURNING expires_at`)
+    AND (installation_id IS NULL OR installation_id=?1) RETURNING expires_at,customer_name`)
     .bind(installation, keyHash, now).first();
-  if (row) return reply(200, { valid: true, expires_at: row.expires_at, lease_seconds: LEASE_SECONDS });
+  if (row) return reply(200, { valid: true, expires_at: row.expires_at, lease_seconds: LEASE_SECONDS, customer_name: row.customer_name });
   // A later lookup only explains denial; it never authorizes an unsuccessful atomic write.
   const denied = await db.prepare('SELECT expires_at,installation_id,revoked FROM licenses WHERE key_hash=?1').bind(keyHash).first();
   const reason = !denied ? 'invalid' : denied.revoked ? 'revoked' : denied.expires_at !== null && denied.expires_at <= now ? 'expired' : 'bound_other';
@@ -98,6 +98,18 @@ async function adminPage() {
     'X-Frame-Options': 'DENY',
     'Content-Security-Policy': "default-src 'none'; script-src " + scripts.join(' ') + "; style-src " + styles.join(' ') + "; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   } });
+}
+
+function customerMetadata(data) {
+  const result = {};
+  for (const [field, max, multiline] of [['customer_name', 100, false], ['customer_contact', 120, false], ['notes', 1000, true]]) {
+    if (!Object.hasOwn(data, field)) continue;
+    if (typeof data[field] !== 'string') throw new InputError();
+    const text = data[field].trim();
+    if ((field === 'customer_name' && !text) || Array.from(text).length > max || (multiline ? /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/ : /[\u0000-\u001f\u007f]/).test(text)) throw new InputError();
+    result[field] = text;
+  }
+  return result;
 }
 
 async function handle(request, env) {
@@ -133,19 +145,14 @@ async function handle(request, env) {
   }
   if (request.method === 'GET' && url.pathname === '/v1/admin/session') return reply(200, { authenticated: true });
   if (request.method === 'GET' && url.pathname === '/v1/admin/licenses') {
-    const result = await env.DB.prepare('SELECT id,created_at,expires_at,installation_id,revoked,customer_name FROM licenses ORDER BY created_at DESC').all();
+    const result = await env.DB.prepare('SELECT id,created_at,expires_at,installation_id,revoked,customer_name,customer_contact,notes FROM licenses ORDER BY created_at DESC').all();
     return reply(200, { licenses: result.results });
   }
   if (request.method !== 'POST') return reply(404, { error: 'not_found' });
   if (url.pathname === '/v1/admin/licenses') {
     const data = await body(request);
-    onlyKeys(data, ['expires_at', 'plan', 'customer_name']);
-    let customerName = '';
-    if (Object.hasOwn(data, 'customer_name')) {
-      if (typeof data.customer_name !== 'string') throw new InputError();
-      customerName = data.customer_name.trim();
-      if (!customerName || Array.from(customerName).length > 100 || /[\u0000-\u001f\u007f]/.test(customerName)) throw new InputError();
-    }
+    onlyKeys(data, ['expires_at', 'plan', 'customer_name', 'customer_contact', 'notes']);
+    const metadata = { customer_name: '', customer_contact: '', notes: '', ...customerMetadata(data) };
     if (Object.hasOwn(data, 'plan') && Object.hasOwn(data, 'expires_at')) throw new InputError();
     const issuedAt = Date.now() / 1000;
     let expires = data.expires_at ?? null;
@@ -157,16 +164,45 @@ async function handle(request, env) {
     if (expires !== null && (typeof expires !== 'number' || !Number.isFinite(expires) || expires <= Date.now() / 1000)) throw new InputError();
     const bytes = crypto.getRandomValues(new Uint8Array(32));
     const licenseKey = `SN-${btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')}`;
-    const record = { id: crypto.randomUUID(), created_at: issuedAt, expires_at: expires, customer_name: customerName };
-    await env.DB.prepare('INSERT INTO licenses(id,key_hash,created_at,expires_at,customer_name) VALUES (?1,?2,?3,?4,?5)').bind(record.id, await hash(licenseKey), record.created_at, expires, customerName).run();
+    const record = { id: crypto.randomUUID(), created_at: issuedAt, expires_at: expires, ...metadata };
+    await env.DB.prepare('INSERT INTO licenses(id,key_hash,created_at,expires_at,customer_name,customer_contact,notes) VALUES (?1,?2,?3,?4,?5,?6,?7)').bind(record.id, await hash(licenseKey), record.created_at, expires, metadata.customer_name, metadata.customer_contact, metadata.notes).run();
     return reply(201, { ...record, license_key: licenseKey });
   }
-  const match = /^\/v1\/admin\/licenses\/([^/]+)\/(revoke|reset)$/.exec(url.pathname);
+  const match = /^\/v1\/admin\/licenses\/([^/]+)\/(revoke|reset|update|renew)$/.exec(url.pathname);
   if (!match || !UUID.test(match[1])) return reply(404, { error: 'not_found' });
-  onlyKeys(await body(request), []);
+  const identifier = match[1].toLowerCase();
+  const data = await body(request);
+  if (match[2] === 'update') {
+    onlyKeys(data, ['customer_name', 'customer_contact', 'notes']);
+    const metadata = customerMetadata(data);
+    const fields = Object.keys(metadata);
+    if (!fields.length) throw new InputError();
+    // Only fixed, validated column names enter SQL; values are always bound.
+    const assignments = fields.map((field, index) => field + '=?' + (index + 2)).join(',');
+    const result = await env.DB.prepare(`UPDATE licenses SET ${assignments} WHERE id=?1`)
+      .bind(identifier, ...fields.map(field => metadata[field])).run();
+    return result.meta.changes > 0 ? reply(200, { ok: true }) : reply(404, { error: 'not_found' });
+  }
+  if (match[2] === 'renew') {
+    onlyKeys(data, ['plan'], ['plan']);
+    if (typeof data.plan !== 'string' || !['3_months', '6_months', '1_year', 'lifetime'].includes(data.plan)) throw new InputError();
+    for (let attempt = 0; attempt < 4; attempt++) {
+      const current = await env.DB.prepare('SELECT expires_at FROM licenses WHERE id=?1').bind(identifier).first();
+      if (!current) return reply(404, { error: 'not_found' });
+      if (current.expires_at === null && data.plan !== 'lifetime') return reply(409, { error: 'already_lifetime' });
+      const expires = planExpiry(data.plan, Math.max(Date.now() / 1000, current.expires_at ?? 0));
+      // Compare-and-swap prevents simultaneous renewals from overwriting one another.
+      const result = await env.DB.prepare('UPDATE licenses SET expires_at=?1 WHERE id=?2 AND expires_at IS ?3 RETURNING expires_at,revoked')
+        .bind(expires, identifier, current.expires_at).first();
+      if (result) return reply(200, { ok: true, expires_at: result.expires_at, revoked: result.revoked });
+    }
+    return reply(409, { error: 'conflict' });
+  }
+  onlyKeys(data, []);
   const change = match[2] === 'revoke' ? 'revoked=1' : 'installation_id=NULL';
-  const result = await env.DB.prepare(`UPDATE licenses SET ${change} WHERE id=?1`).bind(match[1].toLowerCase()).run();
+  const result = await env.DB.prepare(`UPDATE licenses SET ${change} WHERE id=?1`).bind(identifier).run();
   return result.meta.changes > 0 ? reply(200, { ok: true }) : reply(404, { error: 'not_found' });
+
 }
 
 export default {

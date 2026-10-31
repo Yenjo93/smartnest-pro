@@ -9,14 +9,25 @@ export function energySettings(ctx: Ctx) {
   ctx.showSheet({
     title: ctx.t("energy_usage"),
     render: (c) => {
+      const update = (fn: (draft: typeof c.config) => void) => c.editing ? c.update(fn) : c.saveLayout(fn);
       const h = c.config.home;
       const energy = entityOptions(c, ["sensor"], ["energy"]);
+      const ar = c.lang === "ar";
+      const experience = c.config.experience ?? {};
+      const setExperience = (key: "tariff" | "currency" | "monthly_budget" | "power_alert_kw" | "power_entity", value: string | number | undefined) => update(draft => { Object.assign((draft.experience ??= {}), { [key]: value }); });
+      const numberField = (key: "tariff" | "monthly_budget" | "power_alert_kw", title: string) => html`<label class="field"><span>${title}</span><input type="number" min="0" max="100000000" step="0.01" .value=${String(experience[key] ?? "")} @change=${(event: Event) => { const text = (event.target as HTMLInputElement).value; const value = Number(text); if (!text) setExperience(key, undefined); else if (Number.isFinite(value) && value >= 0 && value <= 100000000) setExperience(key, value); }}></label>`;
       return html`
-        ${entityField(c, c.t("energy_meter"), h.energy, energy, (v) => c.update((d) => (d.home.energy = v)))}
+        ${entityField(c, c.t("energy_meter"), h.energy, energy, (v) => update((d) => (d.home.energy = v)))}
         ${entityField(c, c.t("solar_power"), h.solar_power, entityOptions(c, ["sensor"], ["power"]), (v) =>
-          c.update((d) => (d.home.solar_power = v)),
+          update((d) => (d.home.solar_power = v)),
         )}
-        ${entityField(c, c.t("solar_energy"), h.solar_energy, energy, (v) => c.update((d) => (d.home.solar_energy = v)))}
+        ${entityField(c, c.t("solar_energy"), h.solar_energy, energy, (v) => update((d) => (d.home.solar_energy = v)))}
+        ${entityField(c, ar ? "حساس القدرة اللحظية للبيت (W أو kW)" : "Home live power sensor (W or kW)", (experience as typeof experience & { power_entity?: string }).power_entity, entityOptions(c, ["sensor"], ["power"]), value => setExperience("power_entity", value))}
+        ${numberField("tariff", ar ? "تعرفة كل kWh" : "Price per kWh")}
+        ${textField(ar ? "العملة (مثل ₪ أو $)" : "Currency (for example ₪ or $)", experience.currency ?? "", value => setExperience("currency", value.trim().slice(0, 12) || undefined))}
+        ${numberField("monthly_budget", ar ? "ميزانية الكهرباء الشهرية بالعملة المدخلة" : "Monthly electricity budget in your currency")}
+        ${numberField("power_alert_kw", ar ? "تنبيه عند تجاوز القدرة (kW)" : "Power alert threshold (kW)")}
+        <p>${ar ? "التكلفة تقديرية حسب التعرفة المدخلة، بدون الرسوم الثابتة والضرائب. التنبيه يستخدم حساس القدرة المختار فقط." : "Costs are estimates from your entered tariff, excluding fixed fees and taxes. Alerts use only your selected power sensor."}</p>
       `;
     },
   });

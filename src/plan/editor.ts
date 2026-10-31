@@ -14,6 +14,9 @@ import {
   mdiSofaOutline,
   mdiSquareOutline,
   mdiUndo,
+  mdiRedo,
+  mdiLockOutline,
+  mdiRuler,
   mdiVectorPolygon,
   mdiWall,
   mdiWallSconceFlatOutline,
@@ -53,13 +56,15 @@ export function openPlanEditor(ctx: Ctx) {
   });
 }
 
-type Tool = "room" | "shape" | "wall" | "door" | "open" | "furniture" | "photo";
+type Tool = "room" | "shape" | "wall" | "door" | "open" | "furniture" | "photo" | "measure";
+const isLocked = (value: unknown) => !!(value as { locked?: boolean } | undefined)?.locked;
+const labelOf = (value: unknown) => (value as { label?: string } | undefined)?.label;
 type Drag =
   | { kind: "draw"; x0: number; y0: number; rect: PlanRoom }
   | { kind: "move"; start: PlanPoint; orig: PlanRoom; room: PlanRoom }
   | { kind: "vertex"; index: number; room: PlanRoom }
   | { kind: "photo"; dx: number; dy: number; x: number; y: number }
-  | { kind: "fmove"; id: string; dx: number; dy: number; x: number; y: number };
+  | { kind: "fmove"; id: string; dx: number; dy: number; x: number; y: number; members: { id: string; x: number; y: number }[] };
 
 const polyAttr = (pts: PlanPoint[]) => pts.map((p) => `${p.x},${p.y}`).join(" ");
 const polyArea = (pts: PlanPoint[]) =>
@@ -96,6 +101,76 @@ export class SnPlanEditor extends LitElement {
    */
   @state() private live: { wall?: number; z?: number; scale?: number; stretch?: number } = {};
 
+  @state() private selectedFurnIds: string[] = [];
+  @state() private multiSelect = false;
+  @state() private gridSnap = true;
+  @state() private measurePoints: PlanPoint[] = [];
+  @state() private undoStack: string[] = [];
+  @state() private redoStack: string[] = [];
+
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("keydown", this.historyKey);
+  }
+
+  disconnectedCallback() {
+    window.removeEventListener("keydown", this.historyKey);
+    super.disconnectedCallback();
+  }
+
+  private text(ar: string, en: string) { return this.ctx.lang === "ar" ? ar : en; }
+  private snapValue(value: number, grid = 0.05) { return this.gridSnap ? snap(value, grid) : value; }
+  private snapToFloor(floor: PlanFloor, x: number, y: number) { return this.gridSnap ? snapPoint(floor, x, y) : { x, y }; }
+
+  private mutate(fn: (draft: Ctx["config"]) => void) {
+    this.ctx.update((draft) => {
+      const before = JSON.stringify(draft.plan);
+      fn(draft);
+      if (before !== JSON.stringify(draft.plan)) {
+        this.undoStack = [...this.undoStack.slice(-59), before];
+        this.redoStack = [];
+      }
+    });
+  }
+
+  private restoreHistory(redo = false) {
+    const stack = redo ? this.redoStack : this.undoStack;
+    const saved = stack[stack.length - 1];
+    if (!saved) return;
+    this.ctx.update((draft) => {
+      const current = JSON.stringify(draft.plan);
+      draft.plan = JSON.parse(saved);
+      if (redo) { this.redoStack = this.redoStack.slice(0, -1); this.undoStack = [...this.undoStack, current]; }
+      else { this.undoStack = this.undoStack.slice(0, -1); this.redoStack = [...this.redoStack, current]; }
+    });
+    this.drag = undefined;
+    this.live = {};
+    this.setTool(this.tool);
+  }
+
+  private historyKey = (event: KeyboardEvent) => {
+    if (!this.isConnected || (!event.ctrlKey && !event.metaKey)) return;
+    if (event.composedPath().some(node => node instanceof HTMLElement && (node.matches("input,textarea,select") || node.isContentEditable))) return;
+    if (event.key.toLowerCase() === "z" || event.key.toLowerCase() === "y") {
+      event.preventDefault();
+      this.restoreHistory(event.shiftKey || event.key.toLowerCase() === "y");
+    }
+  };
+
+  private rotateFurniture(degrees: number) {
+    const ids = new Set(this.selectedFurnIds.length ? this.selectedFurnIds : this.selFurn ? [this.selFurn] : []);
+    const members = (this.floor?.furniture ?? []).filter(f => ids.has(f.id) && !isLocked(f));
+    if (!members.length) return;
+    const cx = members.reduce((sum, f) => sum + f.x, 0) / members.length;
+    const cy = members.reduce((sum, f) => sum + f.y, 0) / members.length;
+    const angle = degrees * Math.PI / 180;
+    this.edit(floor => { floor.furniture = (floor.furniture ?? []).map(f => {
+      if (!members.some(member => member.id === f.id)) return f;
+      const dx = f.x - cx, dy = f.y - cy;
+      return { ...f, x: cx + dx * Math.cos(angle) - dy * Math.sin(angle), y: cy + dx * Math.sin(angle) + dy * Math.cos(angle), rot: ((f.rot || 0) + degrees + 360) % 360 };
+    }); });
+  }
+
   private get floor(): PlanFloor | undefined {
     const floors = this.ctx.config.plan.floors;
     return floors.find((f) => f.id === this.floorId) ?? floors[0];
@@ -109,7 +184,7 @@ export class SnPlanEditor extends LitElement {
   /** Edits the current floor in the draft layout; creates the first floor on demand. */
   private edit(fn: (f: PlanFloor) => void) {
     const id = this.floor?.id;
-    this.ctx.update((d) => {
+    this.mutate((d) => {
       let f = d.plan.floors.find((x) => x.id === id) ?? d.plan.floors[0];
       if (!f) {
         f = { id: newId(), name: this.ctx.t("floor_n", { n: 1 }), rooms: [], doors: [], walls: [], furniture: [] };
@@ -120,6 +195,7 @@ export class SnPlanEditor extends LitElement {
   }
 
   private setRoom(room: PlanRoom) {
+    if (isLocked(this.floor?.rooms.find(r => r.id === room.id))) return;
     this.edit((f) => (f.rooms = f.rooms.map((r) => (r.id === room.id ? { ...room, area: r.area } : r))));
   }
 
@@ -128,6 +204,8 @@ export class SnPlanEditor extends LitElement {
     this.selected = undefined;
     this.selVertex = undefined;
     this.selFurn = undefined;
+    this.selectedFurnIds = [];
+    this.measurePoints = [];
     this.selWall = undefined;
     this.shapePts = [];
     this.wallStart = undefined;
@@ -165,6 +243,11 @@ export class SnPlanEditor extends LitElement {
     const target = e.target as Element;
 
     switch (this.tool) {
+      case "measure": {
+        const point = this.snapToFloor(floor, p.x, p.y);
+        this.measurePoints = this.measurePoints.length === 1 ? [...this.measurePoints, point] : [point];
+        return;
+      }
       case "door": {
         const w = nearestWall(floor, p.x, p.y);
         const existing = floor.doors.find((d) => !d.open && Math.hypot(doorPos(d).x - p.x, doorPos(d).y - p.y) < DOOR_W * 0.6);
@@ -192,7 +275,7 @@ export class SnPlanEditor extends LitElement {
           return;
         }
         this.selWall = undefined;
-        const q = snapPoint(floor, p.x, p.y);
+        const q = this.snapToFloor(floor, p.x, p.y);
         if (!this.wallStart) {
           this.wallStart = q;
           return;
@@ -208,7 +291,7 @@ export class SnPlanEditor extends LitElement {
         return;
       }
       case "shape": {
-        const q = snapPoint(floor, p.x, p.y);
+        const q = this.snapToFloor(floor, p.x, p.y);
         const pts = this.shapePts;
         if (pts.length >= 3 && Math.hypot(q.x - pts[0].x, q.y - pts[0].y) < 0.3) {
           this.finishShape();
@@ -223,20 +306,30 @@ export class SnPlanEditor extends LitElement {
         const f = fEl ? floor.furniture?.find((x) => x.id === fEl.dataset.furn) : undefined;
         if (f) {
           this.selFurn = f.id;
-          this.drag = { kind: "fmove", id: f.id, dx: p.x - f.x, dy: p.y - f.y, x: f.x, y: f.y };
+          if (e.shiftKey || this.multiSelect) {
+            this.selectedFurnIds = this.selectedFurnIds.includes(f.id) ? this.selectedFurnIds.filter(id => id !== f.id) : [...this.selectedFurnIds, f.id];
+            this.selFurn = this.selectedFurnIds[this.selectedFurnIds.length - 1];
+            return;
+          }
+          if (!this.selectedFurnIds.includes(f.id)) this.selectedFurnIds = [f.id];
+          if (isLocked(f)) return;
+          const members = (floor.furniture ?? []).filter(member => this.selectedFurnIds.includes(member.id) && !isLocked(member)).map(member => ({ id: member.id, x: member.x, y: member.y }));
+          this.drag = { kind: "fmove", id: f.id, dx: p.x - f.x, dy: p.y - f.y, x: f.x, y: f.y, members };
           return;
         }
         if (this.placing) {
           const id = newId();
           const type = this.placing;
-          const x = snap(p.x, 0.05);
-          const y = snap(p.y, 0.05);
+          const x = this.snapValue(p.x, 0.05);
+          const y = this.snapValue(p.y, 0.05);
           this.edit((fl) => (fl.furniture = [...(fl.furniture ?? []), { id, type, x, y, rot: 0 }]));
           this.selFurn = id;
+          this.selectedFurnIds = [id];
           this.placing = undefined;
           return;
         }
         this.selFurn = undefined;
+        this.selectedFurnIds = [];
         return;
       }
       case "photo": {
@@ -250,12 +343,12 @@ export class SnPlanEditor extends LitElement {
     const sel = floor.rooms.find((r) => r.id === this.selected);
     const vEl = target.closest("[data-vertex]") as SVGElement | null;
     const mEl = target.closest("[data-mid]") as SVGElement | null;
-    if (sel && vEl) {
+    if (sel && !isLocked(sel) && vEl) {
       this.selVertex = Number(vEl.dataset.vertex);
       this.drag = { kind: "vertex", index: this.selVertex, room: shapeRoom(sel, roomPts(sel).map((q) => ({ ...q }))) };
       return;
     }
-    if (sel && mEl) {
+    if (sel && !isLocked(sel) && mEl) {
       // A new corner in the middle of that edge, straight into dragging it.
       const i = Number(mEl.dataset.mid);
       const pts = roomPts(sel).map((q) => ({ ...q }));
@@ -271,11 +364,11 @@ export class SnPlanEditor extends LitElement {
     if (r) {
       this.selected = r.id;
       this.selVertex = undefined;
-      this.drag = { kind: "move", start: p, orig: r, room: r };
+      if (!isLocked(r)) this.drag = { kind: "move", start: p, orig: r, room: r };
       return;
     }
-    const x0 = snap(p.x);
-    const y0 = snap(p.y);
+    const x0 = this.snapValue(p.x, GRID);
+    const y0 = this.snapValue(p.y, GRID);
     this.selected = undefined;
     this.selVertex = undefined;
     this.drag = { kind: "draw", x0, y0, rect: { id: newId(), x: x0, y: y0, w: 0, h: 0 } };
@@ -283,19 +376,19 @@ export class SnPlanEditor extends LitElement {
 
   private move = (e: PointerEvent) => {
     const p = this.point(e);
-    if (this.tool === "shape" || this.tool === "wall") this.cursor = snapPoint(this.floorOrEmpty, p.x, p.y);
+    if (this.tool === "shape" || this.tool === "wall" || this.tool === "measure") this.cursor = this.snapToFloor(this.floorOrEmpty, p.x, p.y);
     const d = this.drag;
     if (!d) return;
     switch (d.kind) {
       case "draw": {
-        const x = snap(p.x);
-        const y = snap(p.y);
+        const x = this.snapValue(p.x, GRID);
+        const y = this.snapValue(p.y, GRID);
         this.drag = { ...d, rect: { ...d.rect, x: Math.min(d.x0, x), y: Math.min(d.y0, y), w: Math.abs(x - d.x0), h: Math.abs(y - d.y0) } };
         return;
       }
       case "move": {
-        const dx = snap(p.x - d.start.x, 0.05);
-        const dy = snap(p.y - d.start.y, 0.05);
+        const dx = this.snapValue(p.x - d.start.x, 0.05);
+        const dy = this.snapValue(p.y - d.start.y, 0.05);
         const o = d.orig;
         this.drag = {
           ...d,
@@ -304,14 +397,14 @@ export class SnPlanEditor extends LitElement {
         return;
       }
       case "vertex": {
-        const q = snapPoint(this.without(d.room.id), p.x, p.y);
+        const q = this.snapToFloor(this.without(d.room.id), p.x, p.y);
         const pts = roomPts(d.room).map((v, i) => (i === d.index ? q : v));
         this.drag = { ...d, room: shapeRoom(d.room, pts) };
         return;
       }
       case "photo":
       case "fmove":
-        this.drag = { ...d, x: snap(p.x - d.dx, 0.05), y: snap(p.y - d.dy, 0.05) };
+        this.drag = { ...d, x: this.snapValue(p.x - d.dx, 0.05), y: this.snapValue(p.y - d.dy, 0.05) };
         return;
     }
   };
@@ -323,13 +416,14 @@ export class SnPlanEditor extends LitElement {
     switch (d.kind) {
       case "draw": {
         if (d.rect.w < 1 || d.rect.h < 1) return;
-        const r = snapRect(d.rect, this.floorOrEmpty.rooms);
+        const r = this.gridSnap ? snapRect(d.rect, this.floorOrEmpty.rooms) : d.rect;
         this.selected = r.id;
         this.edit((f) => f.rooms.push(r));
         return;
       }
       case "move": {
         const others = this.without(d.room.id);
+        if (!this.gridSnap) { this.setRoom(d.room); return; }
         if (!d.room.pts) {
           this.setRoom(snapRect(d.room, others.rooms));
           return;
@@ -352,9 +446,15 @@ export class SnPlanEditor extends LitElement {
       case "photo":
         this.edit((f) => f.underlay && ((f.underlay.x = d.x), (f.underlay.y = d.y)));
         return;
-      case "fmove":
-        this.edit((f) => (f.furniture = (f.furniture ?? []).map((x) => (x.id === d.id ? { ...x, x: d.x, y: d.y } : x))));
+      case "fmove": {
+        const anchor = d.members.find(member => member.id === d.id);
+        if (!anchor) return;
+        this.edit(floor => { floor.furniture = (floor.furniture ?? []).map(piece => {
+          const original = d.members.find(member => member.id === piece.id);
+          return original && !isLocked(piece) ? { ...piece, x: original.x + d.x - anchor.x, y: original.y + d.y - anchor.y } : piece;
+        }); });
         return;
+      }
     }
   };
 
@@ -371,7 +471,7 @@ export class SnPlanEditor extends LitElement {
 
   private deleteVertex() {
     const r = this.floorOrEmpty.rooms.find((x) => x.id === this.selected);
-    if (!r || this.selVertex === undefined) return;
+    if (!r || isLocked(r) || this.selVertex === undefined) return;
     const pts = roomPts(r).filter((_, i) => i !== this.selVertex);
     if (pts.length < 3) return;
     this.setRoom(shapeRoom(r, pts));
@@ -379,7 +479,7 @@ export class SnPlanEditor extends LitElement {
   }
 
   private setFurn(id: string, fn: (f: NonNullable<PlanFloor["furniture"]>[number]) => void) {
-    this.edit((fl) => (fl.furniture = (fl.furniture ?? []).map((x) => (x.id === id ? (fn(x), x) : x))));
+    this.edit((fl) => (fl.furniture = (fl.furniture ?? []).map((x) => (x.id === id && !isLocked(x) ? (fn(x), x) : x))));
   }
 
   private furniturePanel() {
@@ -403,11 +503,15 @@ export class SnPlanEditor extends LitElement {
       const bumpLen = (dv: number) => this.setFurn(sel.id, (f) => (f.stretch = clampL((f.stretch ?? 1) + dv)));
       const width = (it?.w ?? 0.5) * scale * stretch;
       return html`<div class="panel">
-        <span class="fname">${itemName(sel.type, lang)}</span>
+        <span class="fname">${itemName(sel.type, lang)} ${this.selectedFurnIds.length > 1 ? `· ${this.selectedFurnIds.length}` : ""}</span>
+        <button class="soft" aria-pressed=${isLocked(sel)} @click=${() => this.edit(floor => {
+          floor.furniture = (floor.furniture ?? []).map(piece => piece.id === sel.id ? { ...piece, locked: !isLocked(piece) } : piece);
+        })}>${icon(mdiLockOutline, 18)}${this.text(isLocked(sel) ? "فتح القفل" : "قفل القطعة", isLocked(sel) ? "Unlock" : "Lock piece")}</button>
+        <label class="field inline"><span>${this.text("اسم القطعة", "Piece label")}</span><input maxlength="80" ?disabled=${isLocked(sel)} .value=${labelOf(sel) ?? ""} @change=${(event: Event) => this.setFurn(sel.id, piece => Object.assign(piece, { label: (event.target as HTMLInputElement).value.trim().slice(0, 80) }))}></label>
         <div class="rot">
-          <button aria-label="-15°" @click=${() => this.setFurn(sel.id, (f) => (f.rot = ((f.rot || 0) - 15 + 360) % 360))}>${icon(mdiRotateLeft, 18)}</button>
-          <button aria-label="90°" @click=${() => this.setFurn(sel.id, (f) => (f.rot = ((f.rot || 0) + 90) % 360))}>${icon(mdiRotate3dVariant, 18)}90°</button>
-          <button aria-label="+15°" @click=${() => this.setFurn(sel.id, (f) => (f.rot = ((f.rot || 0) + 15) % 360))}>${icon(mdiRotateRight, 18)}</button>
+          <button aria-label="-15°" @click=${() => this.rotateFurniture(-15)}>${icon(mdiRotateLeft, 18)}</button>
+          <button aria-label="90°" @click=${() => this.rotateFurniture(90)}>${icon(mdiRotate3dVariant, 18)}90°</button>
+          <button aria-label="+15°" @click=${() => this.rotateFurniture(15)}>${icon(mdiRotateRight, 18)}</button>
         </div>
         ${it?.domains
           ? html`<label class="field inline grow">
@@ -417,10 +521,12 @@ export class SnPlanEditor extends LitElement {
                 this.setFurn(sel.id, (f) => (f.entity = v));
               }}>
                 <option value="" ?selected=${!sel.entity}>${t("none")}</option>
+                ${sel.entity && !hass.states[sel.entity] ? html`<option value=${sel.entity} selected disabled>${this.text("جهاز غير موجود", "Missing device")}: ${sel.entity}</option>` : nothing}
                 ${opts.map((id) => html`<option value=${id} ?selected=${id === sel.entity}>${nameOf(hass, id)} · ${id}</option>`)}
               </select>
             </label>`
           : nothing}
+        ${sel.entity && !hass.states[sel.entity] ? html`<p class="missing-link" role="status">${this.text("الجهاز المرتبط مش موجود. اختار جهاز بديل من القائمة؛ مكان القطعة وإعداداتها رح تضل محفوظة.", "The linked device is missing. Pick a replacement above; its position and settings stay intact.")}</p>` : nothing}
         ${PICTURE_TYPES.includes(sel.type)
           ? html`<label class="field inline grow">
               <span>${t("picture_source")}</span>
@@ -435,8 +541,13 @@ export class SnPlanEditor extends LitElement {
               </select>
             </label>`
           : nothing}
-        <button class="danger" @click=${() => {
-          this.edit((fl) => (fl.furniture = (fl.furniture ?? []).filter((f) => f.id !== sel.id)));
+        <div class="exact-fields">
+          <label class="field inline"><span>${this.text("العرض الدقيق (m)", "Exact width (m)")}</span><input type="number" min=${(it?.w ?? 0.5) * scale * 0.25} max=${(it?.w ?? 0.5) * scale * 4} step="0.01" ?disabled=${isLocked(sel)} .value=${width.toFixed(2)} @change=${(event: Event) => { const next = Number((event.target as HTMLInputElement).value); if (Number.isFinite(next) && next > 0) setLen(next / ((it?.w ?? 0.5) * scale)); }}></label>
+          ${(["x", "y", "rot"] as const).map(key => html`<label class="field inline"><span>${key === "rot" ? this.text("الزاوية °", "Angle °") : key.toUpperCase() + " (m)"}</span><input type="number" step=${key === "rot" ? "1" : "0.05"} ?disabled=${isLocked(sel)} .value=${String(sel[key] ?? 0)} @change=${(event: Event) => { const value = Number((event.target as HTMLInputElement).value); if (Number.isFinite(value) && Math.abs(value) <= 10000) this.setFurn(sel.id, piece => { piece[key] = key === "rot" ? ((value % 360) + 360) % 360 : value; }); }}></label>`)}
+        </div>
+        <button class="danger" ?disabled=${isLocked(sel)} @click=${() => {
+          const ids = new Set(this.selectedFurnIds.length ? this.selectedFurnIds : [sel.id]);
+          this.edit((fl) => (fl.furniture = (fl.furniture ?? []).filter((f) => !ids.has(f.id) || isLocked(f))));
           this.selFurn = undefined;
         }}>${icon(mdiDelete, 18)}</button>
         <div class="sliders">
@@ -497,13 +608,13 @@ export class SnPlanEditor extends LitElement {
 
   private addFloor() {
     const id = newId();
-    this.ctx.update((d) => d.plan.floors.push({ id, name: this.ctx.t("floor_n", { n: d.plan.floors.length + 1 }), rooms: [], doors: [], walls: [], furniture: [] }));
+    this.mutate((d) => d.plan.floors.push({ id, name: this.ctx.t("floor_n", { n: d.plan.floors.length + 1 }), rooms: [], doors: [], walls: [], furniture: [] }));
     this.floorId = id;
     this.setTool(this.tool);
   }
 
   private removeFloor(id: string) {
-    this.ctx.update((d) => (d.plan.floors = d.plan.floors.filter((f) => f.id !== id)));
+    this.mutate((d) => (d.plan.floors = d.plan.floors.filter((f) => f.id !== id)));
     this.floorId = undefined;
     this.setTool(this.tool);
   }
@@ -524,6 +635,7 @@ export class SnPlanEditor extends LitElement {
   ) {
     return html`<div class="slider ${key === "wall" ? "wall" : ""}">
       <span>${label} <b>${shown}</b></span>
+      <input class="precise" aria-label=${key === "stretch" ? this.text("عامل تمديد الطول", "Length multiplier") : label} title=${key === "stretch" ? this.text("عامل التمديد؛ لتحديد العرض بالمتر استعمل خانة العرض الدقيق", "Multiplier; use Exact width for dimensions in metres") : label} type="number" min=${key === "scale" ? min * 100 : min} max=${key === "scale" ? max * 100 : max} step=${key === "scale" ? step * 100 : step} .value=${String(key === "scale" ? Math.round(value * 100) : value)} @change=${(event: Event) => { const next = Number((event.target as HTMLInputElement).value) / (key === "scale" ? 100 : 1); if (Number.isFinite(next)) commit(Math.min(max, Math.max(min, next))); }}>
       <div class="step-row">
         <button class="nudge" aria-label="−" @click=${() => bump(-nudge)}>−</button>
         <input
@@ -547,6 +659,11 @@ export class SnPlanEditor extends LitElement {
     const { t, hass } = this.ctx;
     const floor = this.floorOrEmpty;
     switch (this.tool) {
+      case "measure": {
+        const points = this.measurePoints;
+        const distance = points.length === 2 ? Math.hypot(points[1].x - points[0].x, points[1].y - points[0].y) : undefined;
+        return html`<div class="panel"><span>${distance === undefined ? this.text("اضغط على نقطتين لقياس المسافة بالمتر", "Tap two points to measure in metres") : `${distance.toFixed(2)} m`}</span><button class="soft" @click=${() => this.measurePoints = []}>${this.text("قياس جديد", "New measurement")}</button></div>`;
+      }
       case "shape":
         return html`<div class="panel">
           <span class="fname">${t("points_n", { n: this.shapePts.length })}</span>
@@ -558,7 +675,11 @@ export class SnPlanEditor extends LitElement {
         return this.selWall
           ? html`<div class="panel">
               <span class="fname">${t("wall")}</span>
-              <button class="danger" @click=${() => {
+              ${(() => { const wall = floor.walls?.find(w => w.id === this.selWall); if (!wall) return nothing; return html`
+                <button class="soft" @click=${() => this.edit(f => { f.walls = (f.walls ?? []).map(w => w.id === wall.id ? { ...w, locked: !isLocked(w) } : w); })}>${icon(mdiLockOutline, 18)}${this.text(isLocked(wall) ? "فتح القفل" : "قفل الجدار", isLocked(wall) ? "Unlock wall" : "Lock wall")}</button>
+                ${(["x1", "y1", "x2", "y2"] as const).map(key => html`<label class="field inline"><span>${key} (m)</span><input type="number" step="0.05" ?disabled=${isLocked(wall)} .value=${String(wall[key])} @change=${(event: Event) => { const value = Number((event.target as HTMLInputElement).value); if (Number.isFinite(value) && Math.abs(value) < 10000) this.edit(f => { f.walls = (f.walls ?? []).map(w => w.id === wall.id && !isLocked(w) ? { ...w, [key]: value } : w); }); }}></label>`)}
+              `; })()}
+              <button class="danger" ?disabled=${isLocked(floor.walls?.find(w => w.id === this.selWall))} @click=${() => {
                 const id = this.selWall;
                 this.edit((f) => (f.walls = (f.walls ?? []).filter((w) => w.id !== id)));
                 this.selWall = undefined;
@@ -598,6 +719,8 @@ export class SnPlanEditor extends LitElement {
         if (!sel) return nothing;
         const pts = roomPts(sel);
         return html`<div class="panel">
+          <button class="soft" @click=${() => this.edit(f => { f.rooms = f.rooms.map(room => room.id === sel.id ? { ...room, locked: !isLocked(room) } : room); })}>${icon(mdiLockOutline, 18)}${this.text(isLocked(sel) ? "فتح القفل" : "قفل الغرفة", isLocked(sel) ? "Unlock room" : "Lock room")}</button>
+          ${!sel.pts ? (["x", "y", "w", "h"] as const).map(key => html`<label class="field inline"><span>${({x:"X",y:"Y",w:this.text("العرض", "Width"),h:this.text("الطول", "Depth")})[key]} (m)</span><input type="number" step="0.05" ?disabled=${isLocked(sel)} .value=${String(sel[key])} @change=${(event: Event) => { const value = Number((event.target as HTMLInputElement).value); if (Number.isFinite(value) && Math.abs(value) < 10000 && ((key !== "w" && key !== "h") || value >= 0.25)) this.setRoom({ ...sel, [key]: value }); }}></label>`) : nothing}
           <label class="field inline grow">
             <span>${t("pin_room")}</span>
             <select @change=${(e: Event) => {
@@ -611,7 +734,7 @@ export class SnPlanEditor extends LitElement {
           ${this.selVertex !== undefined && pts.length > 3
             ? html`<button class="soft" @click=${() => this.deleteVertex()}>${icon(mdiClose, 18)}${t("delete_point")}</button>`
             : nothing}
-          <button class="danger" @click=${() => {
+          <button class="danger" ?disabled=${isLocked(sel)} @click=${() => {
             this.edit((f) => (f.rooms = f.rooms.filter((r) => r.id !== sel.id)));
             this.selected = undefined;
           }}>${icon(mdiDelete, 18)}${t("delete")}</button>
@@ -642,8 +765,14 @@ export class SnPlanEditor extends LitElement {
       open: t("hint_open"),
       furniture: this.placing ? t("hint_place") : t("hint_furniture"),
       photo: t("hint_photo"),
+      measure: this.text("اضغط على نقطتين؛ القياس لا يغيّر التصميم", "Tap two points; measuring does not change the layout"),
     };
-    const furn = (floor.furniture ?? []).map((f) => (d?.kind === "fmove" && d.id === f.id ? { ...f, x: d.x, y: d.y } : f));
+    const furn = (floor.furniture ?? []).map(f => {
+      if (d?.kind !== "fmove") return f;
+      const anchor = d.members.find(member => member.id === d.id);
+      const original = d.members.find(member => member.id === f.id);
+      return original && anchor ? { ...f, x: original.x + d.x - anchor.x, y: original.y + d.y - anchor.y } : f;
+    });
     const tools: [Tool, string, string][] = [
       ["room", mdiSquareOutline, t("tool_room")],
       ["shape", mdiVectorPolygon, t("tool_shape")],
@@ -652,6 +781,7 @@ export class SnPlanEditor extends LitElement {
       ["open", mdiWallSconceFlatOutline, t("tool_open")],
       ["furniture", mdiSofaOutline, t("tool_furniture")],
       ["photo", mdiImageOutline, t("tool_photo")],
+      ["measure", mdiRuler, this.text("قياس", "Measure")],
     ];
     const selPts = sel ? roomPts(sel) : [];
 
@@ -666,6 +796,12 @@ export class SnPlanEditor extends LitElement {
         <div class="tools" role="group">
           ${tools.map(([k, ic, label]) => html`<button class=${this.tool === k ? "on" : ""} @click=${() => this.setTool(k)}>${icon(ic, 18)}${label}</button>`)}
         </div>
+      </div>
+      <div class="history-tools">
+        <button class="soft" ?disabled=${!this.undoStack.length} title="Ctrl/Cmd+Z" @click=${() => this.restoreHistory()}>${icon(mdiUndo, 18)}${this.text("تراجع", "Undo")}</button>
+        <button class="soft" ?disabled=${!this.redoStack.length} title="Ctrl/Cmd+Shift+Z" @click=${() => this.restoreHistory(true)}>${icon(mdiRedo, 18)}${this.text("إعادة", "Redo")}</button>
+        <button class="soft" aria-pressed=${this.gridSnap} @click=${() => this.gridSnap = !this.gridSnap}>${this.text("محاذاة الشبكة", "Grid snap")}: ${this.gridSnap ? this.text("مفعّلة", "On") : this.text("متوقفة", "Off")}</button>
+        ${this.tool === "furniture" ? html`<button class="soft" aria-pressed=${this.multiSelect} @click=${() => this.multiSelect = !this.multiSelect}>${this.text("تحديد متعدد", "Multi-select")}: ${this.multiSelect ? this.text("مفعّل", "On") : this.text("متوقف", "Off")}</button>` : nothing}
       </div>
       <p class="hint">${hints[this.tool]}</p>
 
@@ -694,7 +830,7 @@ export class SnPlanEditor extends LitElement {
           const pts = roomPts(r);
           const c = innerPoint(r);
           const size = r.pts ? `${polyArea(pts).toFixed(1)} m²` : `${r.w.toFixed(2)} × ${r.h.toFixed(2)} m`;
-          return svg`<g data-room=${r.id} class="room ${r.id === this.selected ? "sel" : ""} ${r.area ? "" : "loose"}">
+          return svg`<g data-room=${r.id} class="room ${r.id === this.selected ? "sel" : ""} ${r.area ? "" : "loose"} ${isLocked(r) ? "locked" : ""}">
             <polygon points=${polyAttr(pts)}></polygon>
             <text x=${c.x} y=${c.y} font-size=${Math.min(0.5, r.w / 6)}>${name}</text>
             <text class="dim" x=${c.x} y=${c.y + 0.5} font-size="0.32">${size}</text>
@@ -711,12 +847,13 @@ export class SnPlanEditor extends LitElement {
           const w = it?.w ?? 0.5;
           const dd = it?.d ?? 0.5;
           const s = (Math.min(w, dd) * 0.7) / 24;
-          return svg`<g data-furn=${f.id} class="furn ${f.id === this.selFurn ? "sel" : ""} ${f.entity ? "linked" : ""}" transform="translate(${f.x} ${f.y}) rotate(${f.rot || 0}) scale(${(f.scale ?? 1) * (f.stretch ?? 1)} ${f.scale ?? 1})">
+          return svg`<g data-furn=${f.id} class="furn ${this.selectedFurnIds.includes(f.id) || f.id === this.selFurn ? "sel" : ""} ${isLocked(f) ? "locked" : ""} ${f.entity ? "linked" : ""}" transform="translate(${f.x} ${f.y}) rotate(${f.rot || 0}) scale(${(f.scale ?? 1) * (f.stretch ?? 1)} ${f.scale ?? 1})">
             <rect x=${-w / 2} y=${-dd / 2} width=${w} height=${dd} rx="0.05"></rect>
             ${it ? svg`<path d=${it.icon} transform="translate(${-12 * s} ${-12 * s}) scale(${s})"></path>` : nothing}
-          </g>`;
+          </g>${labelOf(f) ? svg`<text class="furn-label" x=${f.x} y=${f.y + (dd * (f.scale ?? 1)) / 2 + 0.3}>${labelOf(f)}</text>` : nothing}`;
         })}
-        ${sel && this.tool === "room"
+        ${this.measurePoints.length ? svg`${this.measurePoints.map(point => svg`<circle class="ptdot" cx=${point.x} cy=${point.y} r="0.16"></circle>`)}${this.measurePoints.length === 2 ? svg`<line class="measurement" x1=${this.measurePoints[0].x} y1=${this.measurePoints[0].y} x2=${this.measurePoints[1].x} y2=${this.measurePoints[1].y}></line><text class="furn-label" x=${(this.measurePoints[0].x + this.measurePoints[1].x) / 2} y=${(this.measurePoints[0].y + this.measurePoints[1].y) / 2 - 0.25}>${Math.hypot(this.measurePoints[1].x - this.measurePoints[0].x, this.measurePoints[1].y - this.measurePoints[0].y).toFixed(2)} m</text>` : nothing}` : nothing}
+        ${sel && !isLocked(sel) && this.tool === "room"
           ? svg`${selPts.map((q, i) => {
               const n = selPts[(i + 1) % selPts.length];
               return svg`<g data-mid=${i} class="mid"><circle cx=${(q.x + n.x) / 2} cy=${(q.y + n.y) / 2} r="0.2"></circle>
@@ -773,6 +910,15 @@ export class SnPlanEditor extends LitElement {
         display: grid;
         gap: 12px;
       }
+      .history-tools, .exact-fields { display: flex; flex-wrap: wrap; gap: 8px; }
+      .history-tools .soft[aria-pressed="true"] { border-color: var(--sn-accent); color: var(--sn-accent); }
+      .precise { max-width: 120px; padding: 6px; border-radius: 8px; color: var(--sn-text); background: transparent; border: 1px solid var(--sn-glass-border); }
+      .furn-label { fill: var(--sn-text); font-size: 0.28px; text-anchor: middle; pointer-events: none; }
+      .locked { opacity: .65; }
+      .missing-link { flex-basis: 100%; color: var(--sn-warm, #ffad75); margin: 0; font-size: 12px; }
+      .measurement { stroke: var(--sn-accent); stroke-width: .06; stroke-dasharray: .15 .08; pointer-events: none; }
+      .soft:disabled, .danger:disabled { opacity: .4; cursor: default; }
+      .tool-measure .room, .tool-measure .furn { pointer-events: none; }
       .bar {
         display: flex;
         flex-wrap: wrap;

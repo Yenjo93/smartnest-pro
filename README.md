@@ -4,6 +4,12 @@ A Home Assistant dashboard panel: a live 3D floor plan of your home, energy, cli
 
 Integration domain: `smartnest_pro`. SmartNest Pro requires an active customer license.
 
+## What's new in 0.16.0
+
+A logo-led first-run welcome, Home Center, backup and version restore, private draft previews, expanded floor-plan editing, per-user/screen preferences, notifications and maintenance, real energy comparisons and budgets, SmartNest access scopes and guests, persistent scene schedules, and owner license renewal/contact notes. See the [57-feature implementation guide](docs/experience-0.16.md).
+
+Existing layouts and keys are preserved. Restart Home Assistant after upgrading, then reload the panel. First-run setup opens automatically only for a new admin dashboard; existing homes can open it from Home Center → Help. Backups exclude the screen PIN; restoring preserves current PIN and user-access rules. Scope restrictions apply to SmartNest; original Home Assistant rights remain authoritative.
+
 ## Install (HACS)
 
 The built panel (`custom_components/smartnest_pro/frontend/`) is committed, so HACS needs no build step.

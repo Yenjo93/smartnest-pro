@@ -17,6 +17,8 @@ export function normalize(raw: unknown): ProConfig {
   const c = raw as Partial<ProConfig>;
   return {
     version: 1,
+    experience: c.experience && typeof c.experience === "object" ? c.experience : {},
+    access: c.access && typeof c.access === "object" ? c.access : undefined,
     settings: { ...base.settings, ...(c.settings ?? {}) },
     hero: {
       image: c.hero?.image,
@@ -30,6 +32,7 @@ export function normalize(raw: unknown): ProConfig {
     },
     rooms: c.rooms && typeof c.rooms === "object" ? c.rooms : {},
     pages: c.pages && typeof c.pages === "object" ? c.pages : {},
+    door: c.door && typeof c.door === "object" ? { ...c.door } : undefined,
     names: c.names && typeof c.names === "object" ? c.names : {},
     robots: c.robots && typeof c.robots === "object" ? c.robots : {},
     plan: {

@@ -31,6 +31,7 @@ from .const import (
 )
 from .license_server import LICENSE_SERVICE_URL
 from .licensing import LicenseManager, CHECK_SECONDS
+from .platform import Platform
 from .upload import SmartNestProUploadView
 from .websocket import async_register_commands
 
@@ -50,6 +51,11 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     license_manager = LicenseManager(hass, entry, LICENSE_SERVICE_URL)
     await license_manager.async_initialize()
     hass.data[DOMAIN]["license"] = license_manager
+    platform = Platform(hass)
+    hass.data[DOMAIN]["platform"] = platform
+    await platform.async_load()
+    platform.listen_states()
+    entry.async_on_unload(platform.unload)
     next_check = time.monotonic() + (CHECK_SECONDS if license_manager.valid else 300)
     last_status = license_manager.status()
 

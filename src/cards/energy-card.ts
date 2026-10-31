@@ -5,11 +5,13 @@ import type { Ctx } from "../ctx";
 import { shared } from "../styles";
 import { icon } from "../ui/icon";
 import { energySettings } from "../settings";
+import { powerKw } from "../ha";
 
 type Stat = { start: number | string; change?: number | null };
 
 /** Hourly kWh for today and yesterday, from the recorder's long-term statistics (what HA's Energy dashboard uses). */
-async function loadHours(ctx: Ctx, id: string): Promise<{ today: number[]; yesterday: number[] }> {
+type Hours = { today: (number | null)[]; yesterday: (number | null)[] };
+async function loadHours(ctx: Ctx, id: string): Promise<Hours> {
   const start = new Date();
   start.setHours(0, 0, 0, 0);
   start.setDate(start.getDate() - 1);
@@ -22,13 +24,17 @@ async function loadHours(ctx: Ctx, id: string): Promise<{ today: number[]; yeste
     types: ["change"],
     units: { energy: "kWh" },
   });
-  const today = new Array(24).fill(0);
-  const yesterday = new Array(24).fill(0);
-  const midnight = start.getTime() + 86_400_000;
+  const today: (number | null)[] = new Array(24).fill(null);
+  const yesterday: (number | null)[] = new Array(24).fill(null);
+  const midnightDate = new Date();
+  midnightDate.setHours(0, 0, 0, 0);
+  const midnight = midnightDate.getTime();
   for (const row of res[id] ?? []) {
     const t = typeof row.start === "number" ? row.start : Date.parse(row.start);
+    if (!Number.isFinite(t) || typeof row.change !== "number" || !Number.isFinite(row.change)) continue;
     const hour = new Date(t).getHours();
-    (t >= midnight ? today : yesterday)[hour] += row.change ?? 0;
+    const values = t >= midnight ? today : yesterday;
+    values[hour] = (values[hour] ?? 0) + row.change;
   }
   return { today, yesterday };
 }
@@ -36,7 +42,8 @@ async function loadHours(ctx: Ctx, id: string): Promise<{ today: number[]; yeste
 @customElement("sn-energy-card")
 export class SnEnergyCard extends LitElement {
   @property({ attribute: false }) ctx!: Ctx;
-  @state() private hours?: { today: number[]; yesterday: number[] };
+  @state() private hours?: Hours;
+  private requestVersion = 0;
   private loadedFor?: string;
   private timer?: number;
 
@@ -47,6 +54,7 @@ export class SnEnergyCard extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     clearInterval(this.timer);
+    this.requestVersion++;
   }
 
   updated() {
@@ -55,31 +63,42 @@ export class SnEnergyCard extends LitElement {
 
   private async refresh(force: boolean) {
     const id = this.ctx?.config.home.energy;
-    if (!id || (!force && this.loadedFor === id)) return;
-    this.loadedFor = id;
+    const day = new Date().toDateString();
+    const key = id + day;
+    if (!id) { this.hours = undefined; this.loadedFor = undefined; return; }
+    if (!force && this.loadedFor === key) return;
+    this.loadedFor = key;
+    const request = ++this.requestVersion;
     try {
-      this.hours = await loadHours(this.ctx, id);
+      const hours = await loadHours(this.ctx, id);
+      if (request === this.requestVersion && this.isConnected) this.hours = hours;
     } catch {
-      this.hours = undefined;
+      if (request === this.requestVersion && this.isConnected) this.hours = undefined;
     }
   }
 
-  private chart(today: number[], yesterday: number[]) {
+  private chart(today: (number | null)[], yesterday: (number | null)[]) {
     const now = new Date().getHours();
     const W = 300;
     const H = 110;
-    const max = Math.max(0.1, ...today, ...yesterday);
+    const max = Math.max(0.1, ...today.filter((v): v is number => v !== null), ...yesterday.filter((v): v is number => v !== null));
     const x = (i: number) => (i / 24) * W;
     const y = (v: number) => H - 14 - (v / max) * (H - 30);
-    const step = (vals: number[], upto: number) => {
+    const step = (vals: (number | null)[], upto: number) => {
       let d = "";
-      for (let i = 0; i <= upto && i < 24; i++) d += `${i ? "L" : "M"}${x(i)},${y(vals[i])} L${x(i + 1)},${y(vals[i])} `;
+      let connected = false;
+      for (let i = 0; i <= upto && i < 24; i++) {
+        const value = vals[i];
+        if (value === null) { connected = false; continue; }
+        d += `${connected ? "L" : "M"}${x(i)},${y(value)} L${x(i + 1)},${y(value)} `;
+        connected = true;
+      }
       return d;
     };
     // The two hungriest hours so far today get the hatched highlight.
     const peaks = today
       .map((v, i) => [v, i] as const)
-      .filter(([, i]) => i <= now)
+      .filter((entry): entry is readonly [number, number] => entry[0] !== null && entry[1] <= now)
       .sort((a, b) => b[0] - a[0])
       .slice(0, 2)
       .filter(([v]) => v > 0)
@@ -97,13 +116,13 @@ export class SnEnergyCard extends LitElement {
         <mask id="m"><rect width="${W}" height="${H}" fill="url(#fadeHatch)"></rect></mask>
       </defs>
       ${peaks.map(
-        (i) => svg`<g mask="url(#m)"><rect x=${x(i)} y=${y(today[i])} width=${W / 24} height=${H - 14 - y(today[i])} fill="url(#hatch)"></rect></g>
-          <circle cx=${x(i)} cy=${y(today[i])} r="2.4" fill="#d9f2bf"></circle>
-          <circle cx=${x(i + 1)} cy=${y(today[i])} r="2.4" fill="#d9f2bf"></circle>`,
+        (i) => svg`<g mask="url(#m)"><rect x=${x(i)} y=${y(today[i]!)} width=${W / 24} height=${H - 14 - y(today[i]!)} fill="url(#hatch)"></rect></g>
+          <circle cx=${x(i)} cy=${y(today[i]!)} r="2.4" fill="#d9f2bf"></circle>
+          <circle cx=${x(i + 1)} cy=${y(today[i]!)} r="2.4" fill="#d9f2bf"></circle>`,
       )}
       <path d=${step(yesterday, 23)} fill="none" stroke="rgba(255,255,255,0.3)" stroke-width="1.2"></path>
       <path d=${step(today, now)} fill="none" stroke="rgba(255,255,255,0.85)" stroke-width="1.4" stroke-dasharray="2.5 3"></path>
-      ${today.slice(0, now + 1).map((v, i) => (i % 3 === 0 ? svg`<circle cx=${x(i)} cy=${y(v)} r="2" fill="#e8e8e8"></circle>` : nothing))}
+      ${today.slice(0, now + 1).map((v, i) => (i % 3 === 0 && v !== null ? svg`<circle cx=${x(i)} cy=${y(v)} r="2" fill="#e8e8e8"></circle>` : nothing))}
     `;
   }
 
@@ -112,9 +131,20 @@ export class SnEnergyCard extends LitElement {
     const id = config.home.energy;
     const h = this.hours;
     const now = new Date().getHours();
-    const total = h ? h.today.reduce((a, b) => a + b, 0) : undefined;
-    const ySame = h ? h.yesterday.slice(0, now + 1).reduce((a, b) => a + b, 0) : 0;
-    const delta = h && ySame > 0 ? Math.round(((total! - ySame) / ySame) * 100) : undefined;
+    const known = h?.today.filter((value): value is number => value !== null);
+    const total = known?.length ? known.reduce((sum, value) => sum + value, 0) : undefined;
+    const completeToday = h?.today.slice(0, now);
+    const completeYesterday = h?.yesterday.slice(0, now);
+    const comparable = now > 0 && completeToday?.every(value => value !== null) && completeYesterday?.every(value => value !== null);
+    const tSame = completeToday?.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+    const ySame = completeYesterday?.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+    const delta = comparable && ySame && tSame !== undefined ? Math.round(((tSame - ySame) / ySame) * 100) : undefined;
+    const experience = config.experience;
+    const tariff = typeof experience?.tariff === "number" && Number.isFinite(experience.tariff) && experience.tariff >= 0 ? experience.tariff : undefined;
+    const powerEntity = (experience as typeof experience & { power_entity?: string })?.power_entity;
+    const power = powerEntity ? powerKw(this.ctx.hass.states[powerEntity]) : undefined;
+    const currentCost = power !== undefined && tariff !== undefined ? Math.max(0, power) * tariff : undefined;
+    const ar = this.ctx.lang === "ar";
     return html`
       <div class="card">
         <div class="head">
@@ -137,10 +167,12 @@ export class SnEnergyCard extends LitElement {
           ? html`<div class="empty">${t("no_energy")}</div>`
           : html`
               <div class="value">${total !== undefined ? total.toFixed(1) : "–"}<small>kWh</small></div>
-              ${h
+              ${h && total !== undefined
                 ? html`<svg class="chart" viewBox="0 0 300 110" preserveAspectRatio="none">${this.chart(h.today, h.yesterday)}</svg>
                     <div class="axis"><span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>24:00</span></div>`
-                : html`<div class="empty">${t("not_configured")}</div>`}
+                : html`<div class="empty">${ar ? "ما في بيانات إحصائية متاحة. تأكد من إعداد عداد الطاقة وRecorder." : "No recorded statistics are available. Check your energy meter and Recorder."}</div>`}
+              ${delta !== undefined ? html`<p class="cost-note">${ar ? "المقارنة للساعات المكتملة نفسها من اليومين." : "Comparison uses matching completed hours in both days."}</p>` : nothing}
+              ${currentCost !== undefined ? html`<p class="cost-note">${ar ? "التكلفة التقديرية بالمعدل الحالي" : "Estimated cost at the current rate"}: <b>${currentCost.toFixed(2)} ${experience?.currency || (ar ? "عملة" : "currency")}/${ar ? "ساعة" : "hour"}</b></p>` : nothing}
             `}
       </div>
     `;
@@ -232,6 +264,7 @@ export class SnEnergyCard extends LitElement {
         font-size: 11px;
         color: #8c8c8c;
       }
+      .cost-note { font-size: 11px; line-height: 1.8; color: #bdbdbd; margin: 9px 0 0; }
       .empty {
         color: #7d7d7d;
       }

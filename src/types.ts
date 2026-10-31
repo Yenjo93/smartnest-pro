@@ -79,6 +79,18 @@ export interface RoomOverride {
 
 export interface ProConfig {
   version: 1;
+  experience?: {
+    setup_completed?: boolean;
+    tariff?: number;
+    currency?: string;
+    monthly_budget?: number;
+    power_alert_kw?: number;
+    power_entity?: string;
+    dnd?: { enabled: boolean; start: string; end: string };
+    maintenance?: { id: string; title: string; entity?: string; due: string; interval_days?: number }[];
+    quick_scenes?: { leave?: string; sleep?: string };
+  };
+  access?: { users: Record<string, { areas?: string[]; entities?: string[]; guest_until?: number }> };
   settings: {
     home_name: string;
     /** Name in the greeting at the top; empty means the signed-in user's first name. */
@@ -90,6 +102,10 @@ export interface ProConfig {
     /** No blur and lighter shadows, for slow phones. */
     reduce_effects: boolean;
     default_room?: string;
+    performance?: "auto" | "light" | "high";
+    plan_view?: "3d" | "2d";
+    font_scale?: number;
+    high_contrast?: boolean;
     /** Kiosk mode PIN: needed to edit or leave kiosk mode on a device that has it on. */
     kiosk_pin?: string;
   };
