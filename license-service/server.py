@@ -286,7 +286,7 @@ def main():
         path += f"/{identifier}/{args.command}"
         data = {}
     request = Request(base + path, data=None if data is None else json.dumps(data).encode(),
-                      headers={"Authorization": "Bearer " + token, "Content-Type": "application/json"})
+                      headers={"Authorization": "Bearer " + token, "Content-Type": "application/json", "User-Agent": "SmartNest-Pro-License/1.0"})
     try:
         with build_opener(NoRedirect).open(request, timeout=15) as response:
             print(json.dumps(json.load(response), indent=2))
