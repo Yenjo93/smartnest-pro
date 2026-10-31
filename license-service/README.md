@@ -1,6 +1,6 @@
 # SmartNest license service
 
-This folder contains the licensing server and an owner-only command line client. It is prepared locally; **it has not been deployed and has no public URL yet**. You need a server, a domain and HTTPS before customer activation can work.
+This folder contains the licensing server and an owner-only command line client. For Cloudflare deployment on `licenses.smartnest.pro`, use [cloudflare/README.md](cloudflare/README.md). The Python/Docker instructions below are an alternative hosting option.
 
 The service issues random keys, stores only their SHA-256 hashes, binds a key to one installation on its first successful validation, and supports expiration, revocation and resetting the installation binding. It does not receive Home Assistant entities, addresses or dashboard layouts. A copied full Home Assistant backup can copy the installation identity too; local code can be modified by its owner, so licensing is not unbreakable copy protection.
 

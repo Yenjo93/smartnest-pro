@@ -1,2 +1,2 @@
 """Owner-controlled endpoint. Set before distributing the integration."""
-LICENSE_SERVICE_URL = ""
+LICENSE_SERVICE_URL = 'https://licenses.smartnest.pro'

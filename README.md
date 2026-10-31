@@ -14,7 +14,9 @@ The built panel (`custom_components/smartnest_pro/frontend/`) is committed, so H
 
 ## Online licensing
 
-SmartNest requires an online license from the service in [license-service/README.md](license-service/README.md). The service is prepared for deployment; no public service URL is bundled. Deploy it on your server behind HTTPS, run `python3 scripts/configure-license-service.py https://YOUR-REAL-LICENSE-DOMAIN` to pin that address in the distributed integration, then issue and give the customer their key. Do not distribute this unconfigured build: `license_server.py` intentionally has no placeholder endpoint. Keep the owner admin token on the server only.
+For the smartnest.pro Cloudflare deployment, see [Cloudflare setup](license-service/cloudflare/README.md).
+
+SmartNest requires an online license from the service in [license-service/README.md](license-service/README.md). This build uses the deployed Cloudflare service at `https://licenses.smartnest.pro`. Issue a customer key using the owner CLI, then give the customer only that key. For a different deployment, run `python3 scripts/configure-license-service.py https://YOUR-REAL-LICENSE-DOMAIN` before distributing the integration. Keep the owner admin token on the server only.
 
 - Each key binds to one installation identity stored in `.storage/smartnest_pro.installation`. Multiple tablets/phones on the same HA installation share that license. No HA tokens, entities or layouts are sent to the service.
 - Validation happens on startup and every hour. Explicit rejection immediately invalidates the cached license; connected screens lock within about one minute after HA receives it. Revocation is therefore not instantaneous.

@@ -63,6 +63,7 @@ async def validate(session: Any, url: str, key: str, installation_id: str) -> di
         async with session.post(
             f"{normalize_url(url)}/v1/validate",
             json={"license_key": key.strip(), "installation_id": installation_id},
+            headers={"User-Agent": "SmartNest-Pro-License/1.0"},
             timeout=aiohttp.ClientTimeout(total=15), allow_redirects=False,
         ) as response:
             if response.status in (400, 401, 403):
