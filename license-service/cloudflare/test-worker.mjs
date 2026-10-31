@@ -57,7 +57,7 @@ test('binds to one installation and returns unchanged client contract', async t 
   const request = activate(key.license_key);
   const first = await call('/v1/validate', request);
   assert.equal(first.status, 200);
-  assert.deepEqual(first.data, { valid: true, expires_at: null, lease_seconds: 259200 });
+  assert.deepEqual(first.data, { valid: true, expires_at: null, lease_seconds: 259200, customer_name: '' });
   assert.equal((await call('/v1/validate', request)).status, 200);
   assert.deepEqual(await call('/v1/validate', activate(key.license_key)), { status: 403, data: { valid: false, reason: 'bound_other' } });
 });
@@ -219,7 +219,7 @@ test('admin document has a restrictive CSP with exact hashes and no embedded sec
   }
 });
 
-test('customer names persist, are trimmed, and stay private to owner APIs', async t => {
+test('customer names persist, are trimmed, and display only after valid activation', async t => {
   const { call } = fixture(t);
   const created = await call('/v1/admin/licenses', { plan: '3_months', customer_name: '  أحمد — المنزل  ' });
   assert.equal(created.status, 201);
@@ -228,7 +228,9 @@ test('customer names persist, are trimmed, and stay private to owner APIs', asyn
   assert.equal(listed.data.licenses.find(r => r.id === created.data.id).customer_name, 'أحمد — المنزل');
   const activated = await call('/v1/validate', activate(created.data.license_key));
   assert.equal(activated.status, 200);
-  assert.equal(Object.hasOwn(activated.data, 'customer_name'), false);
+  assert.equal(activated.data.customer_name, 'أحمد — المنزل');
+  assert.equal(Object.hasOwn(activated.data, 'customer_contact'), false);
+  assert.equal(Object.hasOwn(activated.data, 'notes'), false);
   const legacy = await call('/v1/admin/licenses', {});
   assert.equal(legacy.status, 201);
   assert.equal(legacy.data.customer_name, '');
@@ -263,4 +265,95 @@ test('admin page embedded script parses and customer names use text-only renderi
   const match = /<script>([\s\S]*?)<\/script>/.exec(ADMIN_HTML);
   assert.ok(match);
   assert.doesNotThrow(() => new Script(match[1]));
+});
+
+test('customer contact and private notes can be created, edited and cleared without changing authorization', async t => {
+  const { call, sqlite } = fixture(t);
+  const created = await call('/v1/admin/licenses', { plan: '3_months', customer_name: 'أحمد', customer_contact: '  ahmad@example.com  ', notes: '  Support call\nFollow up next week  ' });
+  assert.equal(created.status, 201);
+  const id = created.data.id;
+  assert.equal(created.data.customer_contact, 'ahmad@example.com');
+  assert.equal(created.data.notes, 'Support call\nFollow up next week');
+  const before = sqlite.prepare('SELECT * FROM licenses WHERE id=?').get(id);
+  const key = created.data.license_key;
+  const request = activate(key);
+  const activated = await call('/v1/validate', request);
+  assert.equal(activated.status, 200);
+  assert.equal(Object.hasOwn(activated.data, 'notes'), false);
+  assert.equal(Object.hasOwn(activated.data, 'customer_contact'), false);
+  assert.equal((await call(`/v1/admin/licenses/${id}/update`, { customer_name: 'المنزل الجديد', customer_contact: '', notes: '<script>alert(1)</script>' })).status, 200);
+  const listed = (await call('/v1/admin/licenses')).data.licenses.find(row => row.id === id);
+  assert.equal(listed.customer_name, 'المنزل الجديد');
+  assert.equal(listed.customer_contact, '');
+  assert.equal(listed.notes, '<script>alert(1)</script>');
+  assert.equal(sqlite.prepare('SELECT key_hash FROM licenses WHERE id=?').get(id).key_hash, before.key_hash);
+  assert.equal((await call('/v1/validate', request)).status, 200);
+});
+
+test('invalid customer metadata cannot mutate license records', async t => {
+  const { call, issue, sqlite } = fixture(t);
+  const key = await issue();
+  for (const data of [{ customer_contact: 'x'.repeat(121) }, { customer_contact: 'x\ny' }, { notes: 'x'.repeat(1001) }, { notes: '\u0000private' }, { notes: null }, { key_hash: 'overwrite' }, {}]) {
+    assert.equal((await call(`/v1/admin/licenses/${key.id}/update`, data)).status, 400);
+  }
+  const record = sqlite.prepare('SELECT * FROM licenses WHERE id=?').get(key.id);
+  assert.equal(record.customer_contact, '');
+  assert.equal(record.notes, '');
+  assert.equal((await call(`/v1/admin/licenses/${crypto.randomUUID()}/update`, { notes: 'valid' })).status, 404);
+});
+
+test('renewal extends active expiry, keeps the same key and binding, and never clears revocation', async t => {
+  const { call, issue, sqlite } = fixture(t);
+  const initial = Date.parse('2030-01-31T12:00:00Z') / 1000;
+  const key = await issue(initial);
+  const request = activate(key.license_key);
+  assert.equal((await call('/v1/validate', request)).status, 200);
+  const before = sqlite.prepare('SELECT * FROM licenses WHERE id=?').get(key.id);
+  const renewed = await call(`/v1/admin/licenses/${key.id}/renew`, { plan: '3_months' });
+  assert.equal(renewed.status, 200);
+  assert.equal(renewed.data.expires_at, Date.parse('2030-04-30T12:00:00Z') / 1000);
+  assert.equal((await call('/v1/validate', request)).status, 200);
+  const after = sqlite.prepare('SELECT * FROM licenses WHERE id=?').get(key.id);
+  assert.equal(after.key_hash, before.key_hash);
+  assert.equal(after.installation_id, before.installation_id);
+  assert.equal((await call(`/v1/admin/licenses/${key.id}/revoke`, {})).status, 200);
+  assert.equal((await call(`/v1/admin/licenses/${key.id}/renew`, { plan: '1_year' })).status, 200);
+  assert.equal((await call('/v1/validate', request)).data.reason, 'revoked');
+});
+
+test('expired renewal begins now and lifetime cannot be accidentally shortened', async t => {
+  const { call, issue, sqlite } = fixture(t);
+  const key = await issue();
+  sqlite.prepare('UPDATE licenses SET expires_at=1 WHERE id=?').run(key.id);
+  const before = Date.now() / 1000;
+  const renewed = await call(`/v1/admin/licenses/${key.id}/renew`, { plan: '6_months' });
+  assert.equal(renewed.status, 200);
+  assert.ok(renewed.data.expires_at > before + 170 * 86400);
+  assert.equal((await call(`/v1/admin/licenses/${key.id}/renew`, { plan: 'lifetime' })).data.expires_at, null);
+  assert.equal((await call(`/v1/admin/licenses/${key.id}/renew`, { plan: '3_months' })).status, 409);
+  assert.equal((await call(`/v1/admin/licenses/${key.id}/renew`, { plan: 'unknown' })).status, 400);
+  assert.equal((await call(`/v1/admin/licenses/${crypto.randomUUID()}/renew`, { plan: '1_year' })).status, 404);
+});
+
+test('competing renewals both extend the same license without lost updates', async t => {
+  const { call, issue } = fixture(t);
+  const key = await issue(Date.parse('2030-01-15T10:00:00Z') / 1000);
+  const result = await Promise.all([call(`/v1/admin/licenses/${key.id}/renew`, { plan: '3_months' }), call(`/v1/admin/licenses/${key.id}/renew`, { plan: '3_months' })]);
+  assert.equal(result.filter(response => response.status === 200).length, 2);
+  const record = (await call('/v1/admin/licenses')).data.licenses.find(row => row.id === key.id);
+  assert.equal(record.expires_at, Date.parse('2030-07-15T10:00:00Z') / 1000);
+});
+
+test('private metadata migration preserves old names, bindings and revocation', t => {
+  const sqlite = new DatabaseSync(':memory:');
+  t.after(() => sqlite.close());
+  sqlite.exec(`CREATE TABLE licenses (id TEXT PRIMARY KEY, key_hash TEXT UNIQUE NOT NULL, created_at REAL NOT NULL, expires_at REAL, installation_id TEXT, revoked INTEGER NOT NULL DEFAULT 0, customer_name TEXT NOT NULL DEFAULT '');
+    INSERT INTO licenses VALUES ('id','hash',100,200,'installation',1,'Customer');`);
+  sqlite.exec(readFileSync(new URL('./migrations/0003-customer-notes.sql', import.meta.url), 'utf8'));
+  const record = sqlite.prepare('SELECT * FROM licenses').get();
+  assert.equal(record.customer_name, 'Customer');
+  assert.equal(record.customer_contact, '');
+  assert.equal(record.notes, '');
+  assert.equal(record.installation_id, 'installation');
+  assert.equal(record.revoked, 1);
 });

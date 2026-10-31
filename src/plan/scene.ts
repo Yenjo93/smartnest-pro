@@ -103,6 +103,9 @@ export class PlanScene {
   private tilt = 0;
   /** The current floor's wall height. */
   private wallH = WALL_H;
+  private lightQuality = false;
+  private flatView = false;
+  private viewBeforeFlat?: { elevation: number; azimuth: number };
   private hemi: THREE.HemisphereLight;
   private sun: THREE.DirectionalLight;
   /** Called after every render, so the HTML icons can follow the camera. */
@@ -130,6 +133,36 @@ export class PlanScene {
     this.sun.shadow.radius = 4;
     this.sun.shadow.bias = -0.0008;
     this.scene.add(this.hemi, this.sun, this.sun.target, this.group);
+  }
+
+  /** Live quality changes never require rebuilding the plan or losing camera position. */
+  setQuality(light: boolean) {
+    if (this.lightQuality === light) return;
+    this.lightQuality = light;
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, light ? 1 : 2));
+    this.renderer.shadowMap.enabled = this.shadows && !light;
+    this.sun.castShadow = this.shadows && !light;
+    this.resize(this.size.w, this.size.h);
+  }
+
+  /** A true orthographic overhead projection; walls hide so they cannot cover the rooms. */
+  setFlatView(flat: boolean) {
+    if (this.flatView === flat) return;
+    this.flatView = flat;
+    cancelAnimationFrame(this.tilt);
+    cancelAnimationFrame(this.spin);
+    if (flat) {
+      this.viewBeforeFlat = { elevation: this.elevation, azimuth: this.azimuth };
+      this.elevation = THREE.MathUtils.degToRad(89.99);
+      this.azimuth = 0;
+    } else if (this.viewBeforeFlat) {
+      this.elevation = this.viewBeforeFlat.elevation;
+      this.azimuth = this.viewBeforeFlat.azimuth;
+      this.viewBeforeFlat = undefined;
+    }
+    this.group.children.forEach(child => { if (child.userData.planWall) child.visible = !flat; });
+    this.placeCamera();
+    this.render();
   }
 
   setPalette(p: Palette) {
@@ -271,6 +304,8 @@ export class PlanScene {
       const wall = new THREE.Mesh(new THREE.BoxGeometry(len, this.wallH, WALL_T), mats);
       wall.position.set((s.x1 + s.x2) / 2, this.wallH / 2, (s.y1 + s.y2) / 2);
       wall.rotation.y = -s.angle;
+      wall.userData.planWall = true;
+      wall.visible = !this.flatView;
       wall.castShadow = true;
       wall.receiveShadow = true;
       this.group.add(wall);
@@ -404,7 +439,7 @@ export class PlanScene {
     let last = 0;
     const loop = (now: number) => {
       // 30 fps is plenty for spinning fans and flowing power, and halves the work on a wall tablet that's on all day.
-      if (now - last < 32) {
+      if (now - last < (this.lightQuality ? 66 : 32)) {
         this.anim = requestAnimationFrame(loop);
         return;
       }

@@ -108,6 +108,8 @@ class LicenseManager:
         self.entry = entry
         self.url = service_url
         self.store = Store(hass, 1, "smartnest_pro.license")
+        self.expires_at: float | None = None
+        self.customer_name = ""
         self.deadline = 0.0
         self.checked_at = 0.0
         self.reason = "activation_required"
@@ -121,7 +123,7 @@ class LicenseManager:
         return self.checked_at <= now < self.deadline
 
     def status(self) -> dict:
-        return {"valid": self.valid, "reason": "active" if self.valid else self.reason}
+        return {"valid": self.valid, "reason": "active" if self.valid else self.reason, "expires_at": self.expires_at, "offline_until": self.deadline or None, "customer_name": self.customer_name}
 
     async def async_initialize(self) -> None:
         self.installation = await installation_id(self.hass)
@@ -136,6 +138,10 @@ class LicenseManager:
             if (type(checked) in (int, float) and type(deadline) in (int, float)
                     and 0 < checked <= now and checked < deadline <= checked + MAX_LEASE_SECONDS):
                 self.deadline, self.checked_at = deadline, checked
+                expiry = data.get("expires_at")
+                self.expires_at = expiry if type(expiry) in (int, float) and math.isfinite(expiry) else None
+                name = data.get("customer_name", "")
+                self.customer_name = name[:100] if isinstance(name, str) else ""
         await self.async_refresh()
 
     async def async_refresh(self) -> None:
@@ -154,6 +160,8 @@ class LicenseManager:
                 now = time.time()
                 self.deadline = lease_deadline(payload, now)
                 self.checked_at = now
+                self.expires_at = payload.get("expires_at")
+                self.customer_name = str(payload.get("customer_name", ""))[:100]
                 self.reason = "active"
             except LicenseDenied:
                 self.deadline = 0
@@ -164,4 +172,4 @@ class LicenseManager:
             await self._save()
 
     async def _save(self) -> None:
-        await self.store.async_save({"identity": self.identity, "deadline": self.deadline, "checked_at": self.checked_at})
+        await self.store.async_save({"identity": self.identity, "deadline": self.deadline, "checked_at": self.checked_at, "expires_at": self.expires_at, "customer_name": self.customer_name})

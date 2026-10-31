@@ -6,6 +6,7 @@ import { domainOf, nameOf } from "../ha";
 import { icon } from "./icon";
 
 export const fieldStyles = css`
+  .field-hint { font-size: 11px; line-height: 1.7; color: var(--sn-text-dim); }
   .field {
     display: grid;
     gap: 6px;
@@ -130,9 +131,27 @@ export function multiField(ctx: Ctx, label: string, values: string[], options: s
   </div>`;
 }
 
+function fieldHint(label: string): string {
+  const ar = /[\u0600-\u06ff]/.test(label);
+  const pick = (a: string, e: string) => ar ? a : e;
+  if (/تعرفة|tariff/i.test(label)) return pick('تكلفة كيلوواط ساعة واحدة حسب مزود الكهرباء.', 'Your electricity price for one kilowatt-hour.');
+  if (/ميزانية|budget/i.test(label)) return pick('الحد الشهري حسب العملة والتعرفة اللي اخترتها.', 'Your monthly target in the selected currency.');
+  if (/طقس|weather/i.test(label)) return pick('اختار كيان الطقس الموجود في Home Assistant.', 'Choose an existing Home Assistant weather entity.');
+  if (/رطوبة|humidity/i.test(label)) return pick('حساس الرطوبة اللي بدك تعرضه لهذه الغرفة.', 'The humidity sensor to display for this room.');
+  if (/حرارة|temperature/i.test(label)) return pick('اختار الحساس المناسب؛ تأكد من وحدة القياس.', 'Choose the matching sensor and check its measurement unit.');
+  if (/طاقة|energy|meter/i.test(label)) return pick('للاستهلاك اختار عداد الطاقة التراكمي بوحدة kWh.', 'For consumption, use a cumulative energy meter measured in kWh.');
+  if (/قدرة|power/i.test(label)) return pick('حساس القدرة اللحظية بوحدة W أو kW.', 'An instantaneous power sensor measured in W or kW.');
+  if (/رمز|pin/i.test(label)) return pick('لقفل أدوات الشاشة؛ مش بديل عن تسجيل دخول Home Assistant.', 'Locks screen controls; it does not replace Home Assistant sign-in.');
+  if (/غرف|غرفة|room/i.test(label)) return pick('الغرف مرتبطة بمناطق Home Assistant. راجع الأجهزة بعد تغيير الربط.', 'Rooms correspond to Home Assistant areas. Review devices after changing links.');
+  if (/لغة|language/i.test(label)) return pick('تلقائي يستعمل لغة حسابك في Home Assistant.', 'Automatic follows your Home Assistant language.');
+  if (/مظهر|theme/i.test(label)) return pick('تلقائي يتبع الوضع الفاتح أو الداكن لجهازك.', 'Automatic follows the light or dark appearance of your device.');
+  return pick('بتقدر ترجع تغيّر هالاختيار من الإعدادات بأي وقت.', 'You can change this choice again in Settings.');
+}
+
 export function selectField(label: string, value: string, options: [string, string][], onChange: (v: string) => void) {
   return html`<label class="field">
     <span>${label}</span>
+    <small class="field-hint">${fieldHint(label)}</small>
     <select @change=${(e: Event) => onChange((e.target as HTMLSelectElement).value)}>
       ${options.map(([v, l]) => html`<option value=${v} ?selected=${v === value}>${l}</option>`)}
     </select>
@@ -142,6 +161,7 @@ export function selectField(label: string, value: string, options: [string, stri
 export function textField(label: string, value: string, onChange: (v: string) => void, type: "text" | "number" = "text") {
   return html`<label class="field">
     <span>${label}</span>
+    <small class="field-hint">${fieldHint(label)}</small>
     <input type=${type} .value=${value} @change=${(e: Event) => onChange((e.target as HTMLInputElement).value)} />
   </label>`;
 }

@@ -216,6 +216,10 @@ const demoConfig: ProConfig = {
 };
 
 const params = new URLSearchParams(location.search);
+const demoVersions: { id: string; created_at: number; config: unknown }[] = [];
+const demoActivity: unknown[] = [];
+const demoSchedules: { id: string; entity_id: string; at: string; timestamp: number }[] = [];
+let demoPreferences: Record<string, unknown> = {};
 let saved: unknown = params.has("empty") ? null : demoConfig;
 const configSubs = new Set<(m: any) => void>();
 let notify: () => void = () => {};
@@ -338,8 +342,22 @@ function statistics() {
 
 async function callWS(msg: Record<string, any>): Promise<any> {
   switch (msg.type) {
+    case "smartnest_pro/access/get":
+      return { restricted: params.has('guest'), areas: params.has('guest') ? ['main_hall'] : [], entities: [], guest_expired: params.has('expired_guest') };
+    case "smartnest_pro/preferences/get": return { preferences: demoPreferences };
+    case "smartnest_pro/preferences/save": demoPreferences = { ...demoPreferences, ...msg.preferences }; return { success: true };
+    case "smartnest_pro/config/history": return { versions: demoVersions };
+    case "smartnest_pro/activity/list": return { events: demoActivity };
+    case "smartnest_pro/schedule/list": return { schedules: demoSchedules };
+    case "smartnest_pro/schedule/add": { const record = { id: crypto.randomUUID(), entity_id: msg.entity_id, at: msg.at, timestamp: Date.parse(msg.at) / 1000 }; demoSchedules.push(record); return record; }
+    case "smartnest_pro/schedule/cancel": { const i = demoSchedules.findIndex(s => s.id === msg.id); if (i >= 0) demoSchedules.splice(i, 1); return { success: true }; }
+    case "smartnest_pro/action":
+      if (params.has('fail_action')) throw new Error('Device did not respond');
+      await callService(msg.domain, msg.service, msg.data);
+      demoActivity.unshift({ at: Date.now() / 1000, user: 'u1', domain: msg.domain, service: msg.service, entities: [msg.data.entity_id], success: true });
+      return { success: true };
     case "smartnest_pro/license/status":
-      return { valid: !params.has("unlicensed"), reason: params.has("unlicensed") ? "invalid" : "active" };
+      return { expires_at: Date.now() / 1000 + 86400 * 24, offline_until: Date.now() / 1000 + 86400 * 3, customer_name: 'Demo home', valid: !params.has("unlicensed"), reason: params.has("unlicensed") ? "invalid" : "active" };
     case "smartnest_pro/timer/list":
       return {};
     case "smartnest_pro/timer/set":
@@ -348,6 +366,7 @@ async function callWS(msg: Record<string, any>): Promise<any> {
     case "smartnest_pro/config/get":
       return { config: saved };
     case "smartnest_pro/config/save":
+      if (saved) demoVersions.unshift({ id: crypto.randomUUID(), created_at: Date.now() / 1000, config: JSON.parse(JSON.stringify(saved)) });
       saved = msg.config;
       configSubs.forEach((cb) => cb({ config: saved }));
       return null;
