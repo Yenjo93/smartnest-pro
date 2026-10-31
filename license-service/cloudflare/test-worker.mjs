@@ -118,3 +118,103 @@ test('fragmented streaming body is bounded independently of content length', asy
   });
   assert.equal((await worker.fetch(request, env)).status, 413);
 });
+
+const ORIGIN = 'https://licenses.smartnest.pro';
+const PANEL_PASSWORD = 'private-panel-password-at-least-24-chars';
+function browser(env, path, data, cookie, origin = ORIGIN) {
+  return worker.fetch(new Request(ORIGIN + path, {
+    method: data === undefined ? 'GET' : 'POST',
+    headers: { 'Content-Type': 'application/json', ...(origin ? { Origin: origin } : {}), ...(cookie ? { Cookie: cookie } : {}) },
+    ...(data === undefined ? {} : { body: JSON.stringify(data) }),
+  }), env);
+}
+
+async function login(env) {
+  env.SMARTNEST_PANEL_PASSWORD = PANEL_PASSWORD;
+  const response = await browser(env, '/v1/admin/login', { password: PANEL_PASSWORD });
+  assert.equal(response.status, 200);
+  const cookie = response.headers.get('Set-Cookie');
+  assert.match(cookie, /Secure; HttpOnly; SameSite=Strict; Path=\//);
+  return cookie.split(';')[0];
+}
+
+test('panel login does not expose credentials and session authorizes owner actions', async t => {
+  const { env } = fixture(t);
+  const cookie = await login(env);
+  const session = await browser(env, '/v1/admin/session', undefined, cookie);
+  assert.deepEqual(await session.json(), { authenticated: true });
+  const issued = await browser(env, '/v1/admin/licenses', { plan: '3_months' }, cookie);
+  assert.equal(issued.status, 201);
+  const key = await issued.json();
+  assert.ok(key.expires_at > key.created_at + 80 * 86400);
+  assert.equal((await browser(env, `/v1/admin/licenses/${key.id}/revoke`, {}, cookie)).status, 200);
+  const logout = await browser(env, '/v1/admin/logout', {}, cookie);
+  assert.match(logout.headers.get('Set-Cookie'), /Max-Age=0/);
+  assert.equal((await browser(env, '/v1/admin/session')).status, 401);
+});
+
+test('login, credential changes, tampered sessions and cross-origin writes fail closed', async t => {
+  const { env } = fixture(t);
+  env.SMARTNEST_PANEL_PASSWORD = PANEL_PASSWORD;
+  assert.equal((await browser(env, '/v1/admin/login', { password: 'wrong' })).status, 401);
+  assert.equal((await browser(env, '/v1/admin/login', { password: PANEL_PASSWORD }, undefined, 'https://evil.example')).status, 403);
+  assert.equal((await browser(env, '/v1/admin/login', { password: PANEL_PASSWORD }, undefined, null)).status, 403);
+  const cookie = await login(env);
+  assert.equal((await browser(env, '/v1/admin/licenses', {}, cookie, 'https://evil.example')).status, 403);
+  assert.equal((await browser(env, '/v1/admin/licenses', {}, cookie, null)).status, 403);
+  const tampered = cookie.slice(0, -1) + (cookie.endsWith('a') ? 'b' : 'a');
+  assert.equal((await browser(env, '/v1/admin/session', undefined, tampered)).status, 401);
+  env.SMARTNEST_PANEL_PASSWORD += 'rotated';
+  assert.equal((await browser(env, '/v1/admin/session', undefined, cookie)).status, 401);
+});
+
+test('sessions expire and missing panel password does not disable CLI', async t => {
+  const { env, call } = fixture(t);
+  assert.equal((await browser(env, '/v1/admin/login', { password: PANEL_PASSWORD })).status, 503);
+  assert.equal((await call('/v1/admin/licenses')).status, 200);
+  const cookie = await login(env);
+  const original = Date.now;
+  Date.now = () => original() + 8 * 3600 * 1000 + 1000;
+  try { assert.equal((await browser(env, '/v1/admin/session', undefined, cookie)).status, 401); }
+  finally { Date.now = original; }
+});
+
+test('all four plans are computed on server and reject ambiguous or unknown inputs', async t => {
+  const { call } = fixture(t);
+  for (const plan of ['3_months', '6_months', '1_year', 'lifetime']) {
+    const { status, data } = await call('/v1/admin/licenses', { plan });
+    assert.equal(status, 201);
+    if (plan === 'lifetime') assert.equal(data.expires_at, null);
+    else assert.ok(data.expires_at > data.created_at);
+  }
+  assert.equal((await call('/v1/admin/licenses', { plan: 'forever' })).status, 400);
+  assert.equal((await call('/v1/admin/licenses', { plan: 'lifetime', expires_at: null })).status, 400);
+});
+
+test('calendar month plans clamp month ends and leap years', async () => {
+  const { planExpiry } = await import('./admin-auth.mjs');
+  const stamp = iso => Date.parse(iso) / 1000;
+  assert.equal(planExpiry('3_months', stamp('2026-01-31T12:30:00Z')), stamp('2026-04-30T12:30:00Z'));
+  assert.equal(planExpiry('6_months', stamp('2027-08-31T12:30:00Z')), stamp('2028-02-29T12:30:00Z'));
+  assert.equal(planExpiry('1_year', stamp('2028-02-29T12:30:00Z')), stamp('2029-02-28T12:30:00Z'));
+});
+
+test('admin document has a restrictive CSP with exact hashes and no embedded secrets', async t => {
+  const { env } = fixture(t);
+  const response = await browser(env, '/admin');
+  assert.equal(response.status, 200);
+  const csp = response.headers.get('Content-Security-Policy');
+  assert.match(csp, /frame-ancestors 'none'/);
+  assert.doesNotMatch(csp, /unsafe-inline|unsafe-eval/);
+  const html = await response.text();
+  assert.ok(!html.includes(ADMIN) && !html.includes(PANEL_PASSWORD));
+  for (const tag of ['script', 'style']) {
+    const blocks = [...html.matchAll(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>', 'g'))];
+    assert.ok(blocks.length);
+    for (const block of blocks) {
+      const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(block[1])));
+      const hash = btoa(String.fromCharCode(...bytes));
+      assert.ok(csp.includes("'sha256-" + hash + "'"));
+    }
+  }
+});

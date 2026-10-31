@@ -3,3 +3,5 @@ data/
 *.sqlite3*
 
 .owner-secrets.json
+
+.admin-access.txt
