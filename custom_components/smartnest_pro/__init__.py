@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import logging
 import os
+import time
+from datetime import timedelta
 
 from homeassistant.components import frontend, panel_custom
 from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers import config_validation as cv
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.storage import Store
 from homeassistant.loader import async_get_integration
 
@@ -25,6 +29,8 @@ from .const import (
     STORAGE_KEY,
     STORAGE_VERSION,
 )
+from .license_server import LICENSE_SERVICE_URL
+from .licensing import LicenseManager, CHECK_SECONDS
 from .upload import SmartNestProUploadView
 from .websocket import async_register_commands
 
@@ -40,6 +46,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Load the saved layout and show the panel."""
     store: Store[dict] = Store(hass, STORAGE_VERSION, STORAGE_KEY)
     hass.data[DOMAIN] = {"store": store, "config": await store.async_load()}
+
+    license_manager = LicenseManager(hass, entry, LICENSE_SERVICE_URL)
+    await license_manager.async_initialize()
+    hass.data[DOMAIN]["license"] = license_manager
+    next_check = time.monotonic() + (CHECK_SECONDS if license_manager.valid else 300)
+    last_status = license_manager.status()
+
+    async def check_license(_now):
+        nonlocal next_check, last_status
+        if time.monotonic() >= next_check:
+            await license_manager.async_refresh()
+            next_check = time.monotonic() + (CHECK_SECONDS if license_manager.valid else 300)
+        status = license_manager.status()
+        if status != last_status:
+            last_status = status
+            async_dispatcher_send(hass, f"{DOMAIN}_license_updated", status)
+
+    entry.async_on_unload(async_track_time_interval(hass, check_license, timedelta(minutes=1)))
 
     files_dir = hass.config.path(FILES_DIR)
     await hass.async_add_executor_job(os.makedirs, files_dir, 0o755, True)

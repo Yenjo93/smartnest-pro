@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import functools
+import inspect
 import time
 from typing import Any
 
@@ -15,8 +17,53 @@ from homeassistant.helpers.event import async_call_later
 from .const import DOMAIN, MAX_CONFIG_BYTES, SIGNAL_CONFIG_UPDATED
 
 
+def require_license(func):
+    """Check every request, including requests from already-open screens."""
+    def allowed(hass, connection, msg):
+        manager = hass.data.get(DOMAIN, {}).get("license")
+        if manager is None or not manager.valid:
+            connection.send_error(msg["id"], "license_required", "Activate SmartNest in integration settings")
+            return False
+        return True
+
+    if inspect.iscoroutinefunction(func):
+        @functools.wraps(func)
+        async def async_wrapper(hass, connection, msg):
+            if allowed(hass, connection, msg):
+                return await func(hass, connection, msg)
+        return async_wrapper
+
+    @functools.wraps(func)
+    def wrapper(hass, connection, msg):
+        if allowed(hass, connection, msg):
+            return func(hass, connection, msg)
+    return wrapper
+
+
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/license/status"})
+@callback
+def ws_license_status(hass, connection, msg):
+    manager = hass.data.get(DOMAIN, {}).get("license")
+    connection.send_result(msg["id"], manager.status() if manager else {"valid": False, "reason": "activation_required"})
+
+
+@websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/license/subscribe"})
+@callback
+def ws_license_subscribe(hass, connection, msg):
+    @callback
+    def forward(status):
+        connection.send_message(websocket_api.event_message(msg["id"], status))
+
+    connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, f"{DOMAIN}_license_updated", forward)
+    connection.send_result(msg["id"])
+    manager = hass.data.get(DOMAIN, {}).get("license")
+    forward(manager.status() if manager else {"valid": False, "reason": "activation_required"})
+
+
 @callback
 def async_register_commands(hass: HomeAssistant) -> None:
+    websocket_api.async_register_command(hass, ws_license_status)
+    websocket_api.async_register_command(hass, ws_license_subscribe)
     websocket_api.async_register_command(hass, ws_get_config)
     websocket_api.async_register_command(hass, ws_save_config)
     websocket_api.async_register_command(hass, ws_subscribe_config)
@@ -27,6 +74,7 @@ def async_register_commands(hass: HomeAssistant) -> None:
 
 @websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/config/get"})
 @callback
+@require_license
 def ws_get_config(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """Any signed-in user can read the layout. None means the panel uses its defaults."""
     data = hass.data.get(DOMAIN)
@@ -41,6 +89,7 @@ def ws_get_config(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
     {vol.Required("type"): "smartnest_pro/config/save", vol.Required("config"): dict}
 )
 @websocket_api.async_response
+@require_license
 async def ws_save_config(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """Only admins can change the layout."""
     data = hass.data.get(DOMAIN)
@@ -62,12 +111,15 @@ async def ws_save_config(hass: HomeAssistant, connection: websocket_api.ActiveCo
 
 @websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/config/subscribe"})
 @callback
+@require_license
 def ws_subscribe_config(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """Push saved changes to every open screen, so the wall tablet updates without a reload."""
 
     @callback
     def forward(config: dict[str, Any]) -> None:
-        connection.send_message(websocket_api.event_message(msg["id"], {"config": config}))
+        manager = hass.data.get(DOMAIN, {}).get("license")
+        if manager and manager.valid:
+            connection.send_message(websocket_api.event_message(msg["id"], {"config": config}))
 
     connection.subscriptions[msg["id"]] = async_dispatcher_connect(hass, SIGNAL_CONFIG_UPDATED, forward)
     connection.send_result(msg["id"])
@@ -95,6 +147,7 @@ def _cancel(hass: HomeAssistant, entity_id: str) -> None:
     }
 )
 @callback
+@require_license
 def ws_timer_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     entity_id = msg["entity_id"]
     if hass.states.get(entity_id) is None:
@@ -113,6 +166,7 @@ def ws_timer_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 
 @websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/timer/cancel", vol.Required("entity_id"): str})
 @callback
+@require_license
 def ws_timer_cancel(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     _cancel(hass, msg["entity_id"])
     connection.send_result(msg["id"])
@@ -120,6 +174,7 @@ def ws_timer_cancel(hass: HomeAssistant, connection: websocket_api.ActiveConnect
 
 @websocket_api.websocket_command({vol.Required("type"): "smartnest_pro/timer/list"})
 @callback
+@require_license
 def ws_timer_list(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """Seconds left per entity."""
     now = time.time()

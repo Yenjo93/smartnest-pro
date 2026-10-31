@@ -10,7 +10,20 @@ The built panel (`custom_components/smartnest_pro/frontend/`) is committed, so H
 
 1. In HA: **HACS → ⋮ → Custom repositories**, add `https://github.com/Yenjo93/smartnest-pro`, type **Integration**.
 2. Download **SmartNest**, restart Home Assistant.
-3. **Settings → Devices & services → Add integration → SmartNest**. A "SmartNest" entry appears in the sidebar.
+3. **Settings → Devices & services → Add integration → SmartNest**. Enter the customer license key. A "SmartNest" entry appears in the sidebar.
+
+## Online licensing
+
+SmartNest requires an online license from the service in [license-service/README.md](license-service/README.md). The service is prepared for deployment; no public service URL is bundled. Deploy it on your server behind HTTPS, run `python3 scripts/configure-license-service.py https://YOUR-REAL-LICENSE-DOMAIN` to pin that address in the distributed integration, then issue and give the customer their key. Do not distribute this unconfigured build: `license_server.py` intentionally has no placeholder endpoint. Keep the owner admin token on the server only.
+
+- Each key binds to one installation identity stored in `.storage/smartnest_pro.installation`. Multiple tablets/phones on the same HA installation share that license. No HA tokens, entities or layouts are sent to the service.
+- Validation happens on startup and every hour. Explicit rejection immediately invalidates the cached license; connected screens lock within about one minute after HA receives it. Revocation is therefore not instantaneous.
+- After a successful validation, network outages permit up to 72 hours offline, never beyond license expiration. Restarting does not extend this grace. Blocking the license server can defer revocation only until the existing lease expires.
+- Existing installations must use **Settings → Devices & services → SmartNest → Reconfigure** to enter the key. Their saved layout stays intact. Reconfigure also replaces an expired key. Only the provider changes the service address using the configuration script and redistributes the updated integration.
+- Invalid licenses block the dashboard and its config/upload/timer APIs. Home Assistant and previously scheduled off-timers continue operating; uploaded files and frontend assets are not a digital-rights boundary.
+- Installation identity is persisted separately from the integration entry. Removing/readding the integration does not release its binding. For a replacement HA installation, reset the binding from the owner CLI and immediately activate the replacement. Full HA backup clones can share the identity; local code and storage remain accessible to the machine owner.
+
+Verification: `python3 -m unittest discover -s tests -v`, then `(cd license-service && python3 -m unittest -v)` and `npm run build`. The Python client tests use lightweight HA substitutes; deployment must still be checked on a real Home Assistant installation.
 
 ## Set it up
 

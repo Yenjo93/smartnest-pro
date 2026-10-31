@@ -7,3 +7,7 @@ __pycache__/
 /reference/
 custom_components/smartnest_pro/frontend/static/house-default.jpg
 .prodtest/
+
+# Local task notes and license service databases
+.router/
+license-service/data/
