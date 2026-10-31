@@ -1,6 +1,7 @@
 import concurrent.futures
 import http.client
 import json
+import sqlite3
 import tempfile
 import threading
 import time
@@ -108,6 +109,30 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(len(self.server.limiter.peers), 4096)
         self.server.limiter.global_tokens = 0
         self.assertEqual(self.validate("SN-" + "x" * 43)[0], 429)
+
+    def test_customer_name_validation_and_persistence(self):
+        status, record, _ = self.request("POST", "/v1/admin/licenses", {"customer_name": "  أحمد  "}, admin=True)
+        self.assertEqual(status, 201)
+        self.assertEqual(record["customer_name"], "أحمد")
+        rows = self.request("GET", "/v1/admin/licenses", admin=True)[1]["licenses"]
+        self.assertEqual(rows[0]["customer_name"], "أحمد")
+        self.assertNotIn("customer_name", self.validate(record["license_key"])[1])
+        for name in ("", "  ", None, 123, {}, "x" * 101, "a\nb"):
+            self.assertEqual(self.request("POST", "/v1/admin/licenses", {"customer_name": name}, admin=True)[0], 400)
+        self.assertEqual(self.create()["customer_name"], "")
+
+    def test_legacy_database_migration_is_preserving_and_idempotent(self):
+        legacy = str(Path(self.temp.name) / "legacy.sqlite3")
+        with sqlite3.connect(legacy) as db:
+            db.execute("CREATE TABLE licenses (id TEXT PRIMARY KEY,key_hash TEXT UNIQUE NOT NULL,created_at REAL NOT NULL,expires_at REAL,installation_id TEXT,revoked INTEGER NOT NULL DEFAULT 0)")
+            db.execute("INSERT INTO licenses VALUES ('legacy','hash',1,2,'installation',1)")
+        store = Store(legacy)
+        Store(legacy)
+        record = store.list()[0]
+        self.assertEqual(record["id"], "legacy")
+        self.assertEqual(record["customer_name"], "")
+        self.assertEqual(record["installation_id"], "installation")
+        self.assertEqual(record["revoked"], 1)
 
     def test_requires_admin_secret(self):
         with self.assertRaises(ValueError):
