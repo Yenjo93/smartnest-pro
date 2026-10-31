@@ -10,6 +10,7 @@ export default defineConfig({
     env: {
       DB: bindings.d1({ name: "smartnest-licenses", id: "01e1349c-67b7-4643-886b-aefed006a108" }),
       SMARTNEST_ADMIN_TOKEN: bindings.secret(),
+      SMARTNEST_PANEL_PASSWORD: bindings.secret(),
       RATE_LIMITER: bindings.rateLimit({ namespace: "1001", simple: { limit: 60, period: 60 } }),
     },
     observability: {

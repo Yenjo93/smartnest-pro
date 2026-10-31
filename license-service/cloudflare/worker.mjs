@@ -1,3 +1,5 @@
+import { ADMIN_HTML } from './admin-page.mjs';
+import { panelConfigured, sameOrigin, passwordMatches, sessionCookie, clearCookie, sessionValid, planExpiry } from './admin-auth.mjs';
 /** SmartNest license API for Cloudflare Workers + D1. No customer secrets are logged. */
 const LEASE_SECONDS = 259200;
 const MAX_BODY = 4096;
@@ -8,9 +10,12 @@ class InputError extends Error {
   constructor(status = 400) { super('Invalid request'); this.status = status; }
 }
 
-function reply(status, data) {
+function reply(status, data, extraHeaders = {}) {
   return Response.json(data, { status, headers: {
     'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
+    'X-Frame-Options': 'DENY',
+    ...extraHeaders,
     'X-Content-Type-Options': 'nosniff',
     'Content-Security-Policy': "default-src 'none'",
     ...(status === 429 ? { 'Retry-After': '60' } : {}),
@@ -78,9 +83,28 @@ async function validate(data, db) {
   return reply(403, { valid: false, reason });
 }
 
+async function adminPage() {
+  const hashes = async (tag) => Promise.all([...ADMIN_HTML.matchAll(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>', 'g'))].map(async match => {
+    const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(match[1])));
+    return "'sha256-" + btoa(String.fromCharCode(...bytes)) + "'";
+  }));
+  const scripts = await hashes('script');
+  const styles = await hashes('style');
+  return new Response(ADMIN_HTML, { headers: {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Cache-Control': 'no-store',
+    'Referrer-Policy': 'no-referrer',
+    'X-Content-Type-Options': 'nosniff',
+    'X-Frame-Options': 'DENY',
+    'Content-Security-Policy': "default-src 'none'; script-src " + scripts.join(' ') + "; style-src " + styles.join(' ') + "; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+  } });
+}
+
 async function handle(request, env) {
   const url = new URL(request.url);
   if (url.search) return reply(404, { error: 'not_found' });
+  if (request.method === 'GET' && (url.pathname === '/admin' || url.pathname === '/admin/')) return adminPage();
+  if (request.method === 'GET' && url.pathname === '/') return Response.redirect(url.origin + '/admin', 302);
   if (request.method === 'GET' && url.pathname === '/health') return reply(200, { ok: true });
   if (!env.DB || typeof env.SMARTNEST_ADMIN_TOKEN !== 'string' || env.SMARTNEST_ADMIN_TOKEN.length < 32 || !env.RATE_LIMITER) return reply(503, { error: 'unavailable' });
   const isAdmin = url.pathname.startsWith('/v1/admin/');
@@ -90,7 +114,24 @@ async function handle(request, env) {
   const { success } = await env.RATE_LIMITER.limit({ key: `${isAdmin ? 'admin' : 'validate'}:${peer}` });
   if (!success) return reply(429, { error: 'rate_limited' });
   if (isValidate) return validate(await body(request), env.DB);
-  if (!await authorized(request, env.SMARTNEST_ADMIN_TOKEN)) return reply(401, { error: 'unauthorized' });
+  if (url.pathname === '/v1/admin/login' && request.method === 'POST') {
+    if (!sameOrigin(request)) return reply(403, { error: 'forbidden' });
+    if (!panelConfigured(env)) return reply(503, { error: 'unavailable' });
+    const input = await body(request);
+    onlyKeys(input, ['password'], ['password']);
+    if (!await passwordMatches(input.password, env)) return reply(401, { error: 'unauthorized' });
+    return reply(200, { authenticated: true }, { 'Set-Cookie': await sessionCookie(env) });
+  }
+  if (url.pathname === '/v1/admin/logout' && request.method === 'POST') {
+    if (!sameOrigin(request)) return reply(403, { error: 'forbidden' });
+    return reply(200, { ok: true }, { 'Set-Cookie': clearCookie() });
+  }
+  const bearer = await authorized(request, env.SMARTNEST_ADMIN_TOKEN);
+  if (!bearer) {
+    if (!await sessionValid(request, env)) return reply(401, { error: 'unauthorized' });
+    if (request.method !== 'GET' && !sameOrigin(request)) return reply(403, { error: 'forbidden' });
+  }
+  if (request.method === 'GET' && url.pathname === '/v1/admin/session') return reply(200, { authenticated: true });
   if (request.method === 'GET' && url.pathname === '/v1/admin/licenses') {
     const result = await env.DB.prepare('SELECT id,created_at,expires_at,installation_id,revoked FROM licenses ORDER BY created_at DESC').all();
     return reply(200, { licenses: result.results });
@@ -98,12 +139,19 @@ async function handle(request, env) {
   if (request.method !== 'POST') return reply(404, { error: 'not_found' });
   if (url.pathname === '/v1/admin/licenses') {
     const data = await body(request);
-    onlyKeys(data, ['expires_at']);
-    const expires = data.expires_at ?? null;
+    onlyKeys(data, ['expires_at', 'plan']);
+    if (Object.hasOwn(data, 'plan') && Object.hasOwn(data, 'expires_at')) throw new InputError();
+    const issuedAt = Date.now() / 1000;
+    let expires = data.expires_at ?? null;
+    if (Object.hasOwn(data, 'plan')) {
+      if (typeof data.plan !== 'string') throw new InputError();
+      try { expires = planExpiry(data.plan, issuedAt); }
+      catch { throw new InputError(); }
+    }
     if (expires !== null && (typeof expires !== 'number' || !Number.isFinite(expires) || expires <= Date.now() / 1000)) throw new InputError();
     const bytes = crypto.getRandomValues(new Uint8Array(32));
     const licenseKey = `SN-${btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')}`;
-    const record = { id: crypto.randomUUID(), created_at: Date.now() / 1000, expires_at: expires };
+    const record = { id: crypto.randomUUID(), created_at: issuedAt, expires_at: expires };
     await env.DB.prepare('INSERT INTO licenses(id,key_hash,created_at,expires_at) VALUES (?1,?2,?3,?4)').bind(record.id, await hash(licenseKey), record.created_at, expires).run();
     return reply(201, { ...record, license_key: licenseKey });
   }

@@ -14,6 +14,8 @@ The built panel (`custom_components/smartnest_pro/frontend/`) is committed, so H
 
 ## Online licensing
 
+Owners can create, copy/download and revoke keys at [the private administration page](https://licenses.smartnest.pro/admin). Plans: 3 calendar months, 6 calendar months, 1 year or lifetime, starting at issuance. The panel password is stored privately on the owner device and never committed.
+
 For the smartnest.pro Cloudflare deployment, see [Cloudflare setup](license-service/cloudflare/README.md).
 
 SmartNest requires an online license from the service in [license-service/README.md](license-service/README.md). This build uses the deployed Cloudflare service at `https://licenses.smartnest.pro`. Issue a customer key using the owner CLI, then give the customer only that key. For a different deployment, run `python3 scripts/configure-license-service.py https://YOUR-REAL-LICENSE-DOMAIN` before distributing the integration. Keep the owner admin token on the server only.
