@@ -133,13 +133,19 @@ async function handle(request, env) {
   }
   if (request.method === 'GET' && url.pathname === '/v1/admin/session') return reply(200, { authenticated: true });
   if (request.method === 'GET' && url.pathname === '/v1/admin/licenses') {
-    const result = await env.DB.prepare('SELECT id,created_at,expires_at,installation_id,revoked FROM licenses ORDER BY created_at DESC').all();
+    const result = await env.DB.prepare('SELECT id,created_at,expires_at,installation_id,revoked,customer_name FROM licenses ORDER BY created_at DESC').all();
     return reply(200, { licenses: result.results });
   }
   if (request.method !== 'POST') return reply(404, { error: 'not_found' });
   if (url.pathname === '/v1/admin/licenses') {
     const data = await body(request);
-    onlyKeys(data, ['expires_at', 'plan']);
+    onlyKeys(data, ['expires_at', 'plan', 'customer_name']);
+    let customerName = '';
+    if (Object.hasOwn(data, 'customer_name')) {
+      if (typeof data.customer_name !== 'string') throw new InputError();
+      customerName = data.customer_name.trim();
+      if (!customerName || Array.from(customerName).length > 100 || /[\u0000-\u001f\u007f]/.test(customerName)) throw new InputError();
+    }
     if (Object.hasOwn(data, 'plan') && Object.hasOwn(data, 'expires_at')) throw new InputError();
     const issuedAt = Date.now() / 1000;
     let expires = data.expires_at ?? null;
@@ -151,8 +157,8 @@ async function handle(request, env) {
     if (expires !== null && (typeof expires !== 'number' || !Number.isFinite(expires) || expires <= Date.now() / 1000)) throw new InputError();
     const bytes = crypto.getRandomValues(new Uint8Array(32));
     const licenseKey = `SN-${btoa(String.fromCharCode(...bytes)).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')}`;
-    const record = { id: crypto.randomUUID(), created_at: issuedAt, expires_at: expires };
-    await env.DB.prepare('INSERT INTO licenses(id,key_hash,created_at,expires_at) VALUES (?1,?2,?3,?4)').bind(record.id, await hash(licenseKey), record.created_at, expires).run();
+    const record = { id: crypto.randomUUID(), created_at: issuedAt, expires_at: expires, customer_name: customerName };
+    await env.DB.prepare('INSERT INTO licenses(id,key_hash,created_at,expires_at,customer_name) VALUES (?1,?2,?3,?4,?5)').bind(record.id, await hash(licenseKey), record.created_at, expires, customerName).run();
     return reply(201, { ...record, license_key: licenseKey });
   }
   const match = /^\/v1\/admin\/licenses\/([^/]+)\/(revoke|reset)$/.exec(url.pathname);

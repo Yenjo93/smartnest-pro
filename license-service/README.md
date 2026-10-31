@@ -72,3 +72,6 @@ python3 -m unittest -v
 ```
 
 Tests use a temporary database and real local HTTP requests, including competing activation requests. No customer data or live service is needed.
+
+
+Customer labels: add `--name "Customer name"` to `create`, or send `customer_name` in the owner create API. Names are trimmed and limited to 1–100 characters; old API clients may omit the field. The standalone service automatically adds the column to existing SQLite databases without changing their keys or bindings. Existing records have an empty label. The owner list includes the label; public validation never returns customer names.

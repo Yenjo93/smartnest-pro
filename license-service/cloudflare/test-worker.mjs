@@ -218,3 +218,49 @@ test('admin document has a restrictive CSP with exact hashes and no embedded sec
     }
   }
 });
+
+test('customer names persist, are trimmed, and stay private to owner APIs', async t => {
+  const { call } = fixture(t);
+  const created = await call('/v1/admin/licenses', { plan: '3_months', customer_name: '  أحمد — المنزل  ' });
+  assert.equal(created.status, 201);
+  assert.equal(created.data.customer_name, 'أحمد — المنزل');
+  const listed = await call('/v1/admin/licenses');
+  assert.equal(listed.data.licenses.find(r => r.id === created.data.id).customer_name, 'أحمد — المنزل');
+  const activated = await call('/v1/validate', activate(created.data.license_key));
+  assert.equal(activated.status, 200);
+  assert.equal(Object.hasOwn(activated.data, 'customer_name'), false);
+  const legacy = await call('/v1/admin/licenses', {});
+  assert.equal(legacy.status, 201);
+  assert.equal(legacy.data.customer_name, '');
+});
+
+test('explicit invalid customer names are rejected without creating records', async t => {
+  const { call, sqlite } = fixture(t);
+  for (const customer_name of ['', '  ', null, 123, {}, 'x'.repeat(101), 'valid\nforged', '\u0000name']) {
+    assert.equal((await call('/v1/admin/licenses', { customer_name })).status, 400);
+  }
+  assert.equal(sqlite.prepare('SELECT count(*) AS count FROM licenses').get().count, 0);
+  assert.equal((await call('/v1/admin/licenses', { customer_name: 'أ'.repeat(100) })).status, 201);
+});
+
+test('D1 name migration preserves existing licenses and activation state', t => {
+  const sqlite = new DatabaseSync(':memory:');
+  t.after(() => sqlite.close());
+  sqlite.exec(`CREATE TABLE licenses (id TEXT PRIMARY KEY, key_hash TEXT UNIQUE NOT NULL, created_at REAL NOT NULL, expires_at REAL, installation_id TEXT, revoked INTEGER NOT NULL DEFAULT 0);
+    INSERT INTO licenses VALUES ('old-id','hash',100,200,'installation',1);`);
+  sqlite.exec(readFileSync(new URL('./migrations/0002-license-name.sql', import.meta.url), 'utf8'));
+  const record = sqlite.prepare('SELECT * FROM licenses').get();
+  assert.equal(record.customer_name, '');
+  assert.equal(record.id, 'old-id');
+  assert.equal(record.expires_at, 200);
+  assert.equal(record.installation_id, 'installation');
+  assert.equal(record.revoked, 1);
+});
+
+test('admin page embedded script parses and customer names use text-only rendering', async () => {
+  const { ADMIN_HTML } = await import('./admin-page.mjs');
+  const { Script } = await import('node:vm');
+  const match = /<script>([\s\S]*?)<\/script>/.exec(ADMIN_HTML);
+  assert.ok(match);
+  assert.doesNotThrow(() => new Script(match[1]));
+});

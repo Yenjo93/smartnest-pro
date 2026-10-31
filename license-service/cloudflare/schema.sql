@@ -5,5 +5,6 @@ CREATE TABLE IF NOT EXISTS licenses (
     created_at REAL NOT NULL,
     expires_at REAL,
     installation_id TEXT,
-    revoked INTEGER NOT NULL DEFAULT 0
+    revoked INTEGER NOT NULL DEFAULT 0,
+    customer_name TEXT NOT NULL DEFAULT ''
 );

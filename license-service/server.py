@@ -34,7 +34,12 @@ class Store:
             db.execute("""CREATE TABLE IF NOT EXISTS licenses (
                 id TEXT PRIMARY KEY, key_hash TEXT UNIQUE NOT NULL,
                 created_at REAL NOT NULL, expires_at REAL,
-                installation_id TEXT, revoked INTEGER NOT NULL DEFAULT 0)""")
+                installation_id TEXT, revoked INTEGER NOT NULL DEFAULT 0,
+                customer_name TEXT NOT NULL DEFAULT '')""")
+
+            columns = {column[1] for column in db.execute("PRAGMA table_info(licenses)")}
+            if "customer_name" not in columns:
+                db.execute("ALTER TABLE licenses ADD COLUMN customer_name TEXT NOT NULL DEFAULT ''")
 
     @contextmanager
     def connect(self):
@@ -45,19 +50,19 @@ class Store:
         finally:
             db.close()
 
-    def create(self, expires_at):
+    def create(self, expires_at, customer_name=""):
         key = "SN-" + secrets.token_urlsafe(32)
-        record = {"id": str(uuid.uuid4()), "created_at": time.time(), "expires_at": expires_at}
+        record = {"id": str(uuid.uuid4()), "created_at": time.time(), "expires_at": expires_at, "customer_name": customer_name}
         with self.connect() as db:
-            db.execute("INSERT INTO licenses(id,key_hash,created_at,expires_at) VALUES (?,?,?,?)",
-                       (record["id"], hashlib.sha256(key.encode()).hexdigest(), record["created_at"], expires_at))
+            db.execute("INSERT INTO licenses(id,key_hash,created_at,expires_at,customer_name) VALUES (?,?,?,?,?)",
+                       (record["id"], hashlib.sha256(key.encode()).hexdigest(), record["created_at"], expires_at, customer_name))
         return {**record, "license_key": key}
 
     def list(self):
         with self.connect() as db:
             db.row_factory = sqlite3.Row
             return [dict(row) for row in db.execute(
-                "SELECT id,created_at,expires_at,installation_id,revoked FROM licenses ORDER BY created_at DESC")]
+                "SELECT id,created_at,expires_at,installation_id,revoked,customer_name FROM licenses ORDER BY created_at DESC")]
 
     def change(self, identifier, action):
         column = "revoked=1" if action == "revoke" else "installation_id=NULL"
@@ -213,13 +218,20 @@ class Handler(BaseHTTPRequestHandler):
                 return
             data = self.body()
             if self.path == "/v1/admin/licenses":
-                if set(data) - {"expires_at"}:
+                if set(data) - {"expires_at", "customer_name"}:
                     raise ValueError
+                customer_name = ""
+                if "customer_name" in data:
+                    if not isinstance(data["customer_name"], str):
+                        raise ValueError
+                    customer_name = data["customer_name"].strip()
+                    if not customer_name or len(customer_name) > 100 or any(ord(c) < 32 or ord(c) == 127 for c in customer_name):
+                        raise ValueError
                 expiry = data.get("expires_at")
                 if expiry is not None and (isinstance(expiry, bool) or not isinstance(expiry, (float, int))
                     or not math.isfinite(expiry) or expiry <= time.time()):
                     raise ValueError
-                self.reply(201, self.server.store.create(expiry))
+                self.reply(201, self.server.store.create(expiry, customer_name))
                 return
             parts = self.path.split("/")
             if len(parts) != 6 or parts[5] not in {"reset", "revoke"}:
@@ -251,6 +263,7 @@ def main():
     sub.add_parser("serve")
     create = sub.add_parser("create")
     create.add_argument("--days", type=float, help="Omit for a perpetual license")
+    create.add_argument("--name", help="Customer name (1–100 characters)")
     sub.add_parser("list")
     for action in ("revoke", "reset"):
         sub.add_parser(action).add_argument("id")
@@ -278,6 +291,11 @@ def main():
         if args.days is not None and (not math.isfinite(args.days) or args.days <= 0):
             parser.error("--days must be a positive finite number")
         data = {"expires_at": None if args.days is None else time.time() + args.days * 86400}
+        if args.name is not None:
+            name = args.name.strip()
+            if not name or len(name) > 100 or any(ord(c) < 32 or ord(c) == 127 for c in name):
+                parser.error("--name must contain 1–100 characters without control characters")
+            data["customer_name"] = name
     elif args.command in {"reset", "revoke"}:
         try:
             identifier = str(uuid.UUID(args.id))

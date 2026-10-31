@@ -2,7 +2,7 @@
 
 A Home Assistant dashboard panel: a live 3D floor plan of your home, energy, climate, favorite devices, scenes and a room panel. Beige, dark and Night purple themes, English and Arabic (RTL), and layouts for wall tablets, desktops and phones.
 
-Integration domain: `smartnest_pro`, so it installs next to the original SmartNest (`smartnest`) without clashing.
+Integration domain: `smartnest_pro`. SmartNest Pro requires an active customer license.
 
 ## Install (HACS)
 
