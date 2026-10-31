@@ -2,12 +2,27 @@
   "config": {
     "step": {
       "user": {
-        "title": "SmartNest",
-        "description": "Adds the SmartNest dashboard to the sidebar. Admins can edit it; everyone else just uses it."
+        "title": "Activate SmartNest",
+        "description": "Enter your license key. Activation requires internet. Previously activated installations have up to 3 days offline, limited by license expiry.",
+        "data": {
+          "license_key": "License key"
+        }
+      },
+      "reconfigure": {
+        "title": "Activate SmartNest",
+        "description": "Enter your license key. Activation requires internet. Previously activated installations have up to 3 days offline, limited by license expiry.",
+        "data": {
+          "license_key": "License key"
+        }
       }
     },
     "abort": {
       "single_instance_allowed": "SmartNest is already set up."
+    },
+    "error": {
+      "invalid_license": "The key is invalid, expired, revoked or bound to another installation.",
+      "cannot_connect": "Cannot reach the license service. Try again later.",
+      "service_not_configured": "This build has no configured license service. Contact the SmartNest provider."
     }
   }
 }

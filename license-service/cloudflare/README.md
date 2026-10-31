@@ -1,0 +1,58 @@
+# خدمة ترخيص SmartNest على Cloudflare
+
+هذه نسخة Cloudflare Workers من الخدمة، مع قاعدة بيانات D1. لا تحتاج سيرفر Docker. إعداد النشر مخصص لحساب Cloudflare الذي يدير `smartnest.pro`، وللعنوان `https://licenses.smartnest.pro`.
+
+واجهة التحقق مطابقة للخدمة الأصلية، لذلك إضافة Home Assistant تستعملها بدون تعديل البروتوكول. يمكن أيضًا استعمال أوامر الإدارة الموجودة في `../server.py` بعد ضبط `SMARTNEST_SERVICE_URL=https://licenses.smartnest.pro` وسر الإدارة في البيئة.
+
+خدمة الإنتاج منشورة على `https://licenses.smartnest.pro` وقاعدة D1 مجهزة. نجح اختبار HTTPS وإصدار مفتاح مؤقت وتفعيله ورفض تثبيت ثانٍ وإيقافه؛ المفتاح التجريبي موقوف. لم يتم اختبار إضافة Home Assistant على جهاز فعلي بعد.
+
+## أوامر النشر
+
+من هذا المجلد، مع Node.js متوافق مع `engines` في `package.json`:
+
+```sh
+npm ci
+npx cf auth login
+npm test
+npm run check
+npm run deploy -- --secrets-file ../.owner-secrets.json
+```
+
+`cloudflare.config.ts` يحتوي ربط قاعدة البيانات والعنوان وحدود الطلبات والسجلات. ملف `.owner-secrets.json` خاص بصاحب الخدمة، موجود محليًا فقط ومُستثنى من Git. احتفظ بنسخة آمنة منه بمدير كلمات مرور؛ من يفقده يستطيع استبدال سر الإدارة من حساب Cloudflare، لكن لا ينشر السر ولا يعطيه للزبائن. عند استنساخ المشروع لحساب آخر، أنشئ قاعدة جديدة وعدّل رقمها والدومين قبل النشر.
+
+لتنفيذ أوامر الإدارة من جهاز المالك، يستخدم `python3 license-service/manage.py` ملف السر الخاص تلقائيًا؛ مثل `python3 license-service/manage.py create --days 365` أو `list` أو `revoke LICENSE_UUID`. لا تنفذ أمر `serve` عبر هذا المساعد؛ هو مخصص لإدارة الخدمة المنشورة.
+
+## التجهيز الأول
+
+1. أنشئ قاعدة D1 باسم `smartnest-licenses`، ونفّذ محتوى `schema.sql` مرة واحدة من وحدة SQL الخاصة بقاعدة البيانات. احتفظ بنسخ احتياطية ولا تحذف القاعدة عند تحديث الكود.
+2. أنشئ Worker باسم `smartnest-licenses` وانشر `worker.mjs`. إعداد أداة Cloudflare CLI موجود في `cloudflare.config.ts`؛ لا حاجة لتشغيل خدمة Python هنا.
+3. أضف ربط D1 باسم **`DB`** يشير إلى القاعدة.
+4. أضف **Secret** باسم **`SMARTNEST_ADMIN_TOKEN`** بقيمة عشوائية قوية لا تقل عن ٣٢ حرفًا. خزّنها بمدير كلمات مرور؛ لا تضعها في GitHub، ولا ترسلها للزبائن. توليد قيمة ممكن بـ `python3 -c 'import secrets; print(secrets.token_urlsafe(48))'` في جهازك.
+5. أضف ربط **Rate Limiting** باسم **`RATE_LIMITER`** من إعداد النشر، بحد ٦٠ طلبًا خلال ٦٠ ثانية. يستخدم الكود مفتاحًا منفصلًا لطلبات التفعيل والإدارة لكل عنوان IP. الحدود تقريبية ومستقلة بين مراكز Cloudflare؛ ليست بديلًا عن قواعد مكافحة الإساءة في حسابك.
+6. اربط Worker بنطاق مخصص **`licenses.smartnest.pro`** وتأكد من HTTPS. لا تغيّر النطاق الأساسي `smartnest.pro` ولا موقعه الحالي.
+7. فعّل السجلات والتتبّع في إعداد النشر دون تسجيل أجسام الطلبات أو ترويسات Authorization.
+8. من جذر مستودع SmartNest شغّل `python3 scripts/configure-license-service.py https://licenses.smartnest.pro`، ثم وزّع الإضافة المحدثة وأعد تشغيل Home Assistant. الزبون يدخل مفتاحه فقط.
+
+الخدمة ترفض التفعيل والإدارة إذا كان ربط قاعدة البيانات أو ربط الحدود أو سر الإدارة مفقودًا. أبق واجهة الإدارة محمية بالسر؛ يفضّل أيضًا تقييدها بعنوانك أو شبكة موثوقة، مع السماح لواجهة `/v1/validate` بالوصول العام. عند إضافة حماية خارجية، عدّل عميل الإدارة بما يناسبها.
+
+## إصدار المفاتيح
+
+من مجلد `license-service`، مع إعداد `SMARTNEST_ADMIN_TOKEN` و`SMARTNEST_SERVICE_URL` في بيئتك الخاصة:
+
+```sh
+python3 server.py create --days 365
+python3 server.py create
+python3 server.py list
+python3 server.py revoke LICENSE_UUID
+python3 server.py reset LICENSE_UUID
+```
+
+المفتاح الكامل يظهر مرة واحدة عند الإصدار. خزّنه وارسله للزبون بشكل خاص؛ القائمة وقاعدة البيانات لا تحتويانه كنص واضح. بدون `--days` يكون الترخيص دائمًا. إعادة ربط تثبيت بديل عبر `reset` لا تلغي الإيقاف. الإيقاف يصل عند التحقق الدوري التالي؛ أثناء انقطاع الإنترنت تبقى مهلة التفعيل المحفوظة حتى ٧٢ ساعة، دون تجاوز نهاية الترخيص.
+
+## الاختبارات المحلية
+
+```sh
+node --test license-service/cloudflare/test-worker.mjs
+```
+
+تحتاج Node.js 24 الذي يوفر `node:sqlite`. الاختبارات تشغّل كود Worker الحقيقي مع قاعدة SQLite محلية بديلة لواجهة D1. هذا يختبر البروتوكول وSQL والحماية؛ يلزم أيضًا تجربة Worker المنشور مع D1 الفعلي قبل دمج الإصدار وتوزيعه.

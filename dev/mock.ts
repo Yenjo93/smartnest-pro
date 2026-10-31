@@ -338,6 +338,8 @@ function statistics() {
 
 async function callWS(msg: Record<string, any>): Promise<any> {
   switch (msg.type) {
+    case "smartnest_pro/license/status":
+      return { valid: !params.has("unlicensed"), reason: params.has("unlicensed") ? "invalid" : "active" };
     case "smartnest_pro/timer/list":
       return {};
     case "smartnest_pro/timer/set":
@@ -379,6 +381,10 @@ export function makeHass(onChange: (h: Hass) => void, role: "admin" | "user" = "
     },
     connection: {
       subscribeMessage: async (cb, msg) => {
+        if (msg.type === "smartnest_pro/license/subscribe") {
+          cb({ valid: !params.has("unlicensed"), reason: params.has("unlicensed") ? "invalid" : "active" } as any);
+          return () => {};
+        }
         if (msg.type === "smartnest_pro/config/subscribe") configSubs.add(cb);
         return () => configSubs.delete(cb);
       },

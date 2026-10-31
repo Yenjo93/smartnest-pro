@@ -1,0 +1,20 @@
+services:
+  licenses:
+    build: .
+    restart: unless-stopped
+    environment:
+      SMARTNEST_ADMIN_TOKEN: ${SMARTNEST_ADMIN_TOKEN:?Set a random admin secret of at least 32 characters}
+    ports:
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - licenses:/data
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 100
+    mem_limit: 256m
+    cpus: 1
+volumes:
+  licenses:
