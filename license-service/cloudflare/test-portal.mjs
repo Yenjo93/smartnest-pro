@@ -59,3 +59,16 @@ test('annual offer and free calendar-month trial replace public legacy plans',as
  const target=new Date(start);const day=target.getUTCDate();target.setUTCDate(1);target.setUTCMonth(target.getUTCMonth()+1);const last=new Date(Date.UTC(target.getUTCFullYear(),target.getUTCMonth()+1,0)).getUTCDate();target.setUTCDate(Math.min(day,last));
  assert.equal(end.getTime(),target.getTime());
 });
+test('payment guide is prominent and creator URL never implies annual billing is ready',async t=>{
+ const {call}=fixture(t);
+ for(const path of ['/','/license','/renew','/patreon']){
+  const html=await (await call(path)).text();
+  assert.match(html,/id="payment-title"/);
+  assert.match(html,/href="https:\/\/www\.patreon\.com\/c\/Yenjo93"/);
+  assert.match(html,/الدفع السنوي غير مفعّل حاليًا/);
+  assert.match(html,/لا تختار الباقة الشهرية/);
+  assert.match(html,/رقم العملية ورقم طلبك/);
+  assert.doesNotMatch(html,/الدفع عبر Patreon متاح|patreon\.com\/[0-9]+\/join/);
+  assert.equal((html.match(/id="patreon-live"/g)||[]).length,1);
+ }
+});
