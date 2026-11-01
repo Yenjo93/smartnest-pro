@@ -41,6 +41,9 @@ export interface Hass {
   callWS<T = any>(msg: Record<string, any>): Promise<T>;
   fetchWithAuth(path: string, init?: RequestInit): Promise<Response>;
   connection: {
+    connected?: boolean;
+    addEventListener?(event: "ready" | "disconnected" | "reconnect-error", handler: (...args: any[]) => void): void;
+    removeEventListener?(event: "ready" | "disconnected" | "reconnect-error", handler: (...args: any[]) => void): void;
     subscribeMessage<T = any>(cb: (msg: T) => void, msg: Record<string, any>): Promise<() => void>;
   };
 }
@@ -86,11 +89,14 @@ export interface ProConfig {
     monthly_budget?: number;
     power_alert_kw?: number;
     power_entity?: string;
+    critical_entities?: string[];
+    door_open_minutes?: number;
+    tariff_schedule?: { start: string; end: string; rate: number }[];
     dnd?: { enabled: boolean; start: string; end: string };
-    maintenance?: { id: string; title: string; entity?: string; due: string; interval_days?: number }[];
+    maintenance?: { id: string; title: string; entity?: string; due: string; interval_days?: number; usage_entity?: string; usage_interval?: number; usage_baseline?: number }[];
     quick_scenes?: { leave?: string; sleep?: string };
   };
-  access?: { users: Record<string, { areas?: string[]; entities?: string[]; guest_until?: number }> };
+  access?: { users: Record<string, { areas?: string[]; entities?: string[]; guest_until?: number; child_mode?: boolean }> };
   settings: {
     home_name: string;
     /** Name in the greeting at the top; empty means the signed-in user's first name. */
@@ -128,6 +134,8 @@ export interface ProConfig {
   plan: Plan;
   /** Names shown on the dashboard instead of Home Assistant's, by entity id. */
   names?: Record<string, string>;
+  /** Search terms in any language; keyed by entity ID. */
+  aliases?: Record<string, string[]>;
   /** Per robot vacuum: which floor plan it cleans and each plan room's segment number in the robot's own map. */
   robots?: Record<string, { floor?: string; segments: Record<string, number> }>;
   /** The front door popup: a doorbell press opens the door camera live on kiosk screens, with Open. */

@@ -1,6 +1,6 @@
 // What each room on the plan should show right now, worked out from Home Assistant's state.
 import type { Hass, PlanFloor, ProConfig } from "../types";
-import { domainOf, entitiesIn, isOn, roomInfo } from "../ha";
+import { domainOf, entitiesIn, isOn, roomInfo, num } from "../ha";
 import { inside, layoutInRoom, roomPts } from "./geometry";
 
 const OPENINGS = ["door", "window", "garage_door", "opening"];
@@ -14,6 +14,8 @@ export interface RoomLive {
   /** AC running: "cool" or "heat". */
   climate?: "cool" | "heat";
   temperature?: number;
+  /** Heatmap uses Celsius only when the source unit is known. */
+  temperatureC?: number;
   occupied: boolean;
   people?: number;
   /** A door or window sensor in this room reports open. */
@@ -51,7 +53,11 @@ export function roomLive(hass: Hass, config: ProConfig, roomId: string, area?: s
   const open = ids.some(
     (id) => domainOf(id) === "binary_sensor" && OPENINGS.includes(hass.states[id]?.attributes.device_class) && hass.states[id].state === "on",
   );
-  return { roomId, light, climate, temperature: info.temperature, occupied: !!info.occupied, people: info.people, open };
+  const sourceTemperature = config.rooms[area]?.temperature ?? ids.find(id => domainOf(id) === "sensor" && hass.states[id]?.attributes.device_class === "temperature");
+  const sensorTemperature = sourceTemperature ? hass.states[sourceTemperature] : undefined;
+  const unit = (num(sensorTemperature) !== undefined ? sensorTemperature?.attributes.unit_of_measurement : ac?.attributes.temperature_unit) ?? (hass as Hass & { config?: { unit_system?: { temperature?: string } } }).config?.unit_system?.temperature;
+  const temperatureC = typeof info.temperature === "number" && Number.isFinite(info.temperature) ? (unit === "°C" || unit === "C" ? info.temperature : unit === "°F" || unit === "F" ? (info.temperature - 32) * 5 / 9 : undefined) : undefined;
+  return { roomId, light, climate, temperature: info.temperature, temperatureC, occupied: !!info.occupied, people: info.people, open };
 }
 
 export interface PlacedDevice {

@@ -21,13 +21,16 @@
     </div>
     <script type="module">
       import "../src/main.ts";
-      import { makeHass } from "./mock.ts";
+      import { makeHass, setMockConnection } from "./mock.ts";
 
       if (new URLSearchParams(location.search).has("showcase")) document.querySelector("#dev")?.remove();
       const panel = document.querySelector("smartnest-pro-panel");
       panel.panel = { config: { asset_base: "/custom_components/smartnest_pro/frontend/static/" } };
       const role = new URLSearchParams(location.search).has("user") ? "user" : "admin";
       panel.hass = makeHass((h) => (panel.hass = h), role);
+      if(new URLSearchParams(location.search).has('connectiontest')){
+        for(const [label,online] of [['Disconnect',false],['Reconnect',true]]){const button=document.createElement('button');button.textContent=label;button.onclick=()=>setMockConnection(online);document.querySelector('#dev')?.append(button);}
+      }
     </script>
   </body>
 </html>

@@ -189,6 +189,7 @@ const sharedBase = css`
     width: 38px;
     height: 38px;
   }
+  :host-context([wall-display]) button:not(.switch){min-height:var(--sn-target-size,52px);}
   button {
     font-family: inherit;
   }

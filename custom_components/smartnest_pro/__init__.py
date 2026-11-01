@@ -54,6 +54,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     platform = Platform(hass)
     hass.data[DOMAIN]["platform"] = platform
     await platform.async_load()
+    integration = await async_get_integration(hass, DOMAIN)
+    version = str(integration.version)
+    await platform.snapshot_version(version)
     platform.listen_states()
     entry.async_on_unload(platform.unload)
     next_check = time.monotonic() + (CHECK_SECONDS if license_manager.valid else 300)
@@ -87,8 +90,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         async_register_commands(hass)
         hass.data[_REGISTERED] = True
 
-    integration = await async_get_integration(hass, DOMAIN)
-    version = str(integration.version)
     stamp = await hass.async_add_executor_job(_build_stamp)
 
     await panel_custom.async_register_panel(

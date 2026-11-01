@@ -29,6 +29,7 @@ import type { PlanFloor, PlanPoint, PlanRoom } from "../types";
 import { shared } from "../styles";
 import { icon } from "../ui/icon";
 import { newId } from "../config";
+import { duplicateRoom } from "./upgrade";
 import {
   DOOR_W,
   GRID,
@@ -720,6 +721,7 @@ export class SnPlanEditor extends LitElement {
         const pts = roomPts(sel);
         return html`<div class="panel">
           <button class="soft" @click=${() => this.edit(f => { f.rooms = f.rooms.map(room => room.id === sel.id ? { ...room, locked: !isLocked(room) } : room); })}>${icon(mdiLockOutline, 18)}${this.text(isLocked(sel) ? "فتح القفل" : "قفل الغرفة", isLocked(sel) ? "Unlock room" : "Lock room")}</button>
+          <button class="soft" @click=${() => { const copied = duplicateRoom(floor, sel.id); if (!copied) return; this.edit(f => Object.assign(f, copied.floor)); this.selected = copied.roomId; this.ctx.toast(this.text("تم نسخ الغرفة والأثاث بدون روابط الأجهزة. راجع موضع النسخة واربطها بمنطقة جديدة.", "Room and furniture copied without device links. Review its position and assign a new area.")); }}>${this.text("نسخ الغرفة مع الأثاث", "Duplicate room and furniture")}</button>
           ${!sel.pts ? (["x", "y", "w", "h"] as const).map(key => html`<label class="field inline"><span>${({x:"X",y:"Y",w:this.text("العرض", "Width"),h:this.text("الطول", "Depth")})[key]} (m)</span><input type="number" step="0.05" ?disabled=${isLocked(sel)} .value=${String(sel[key])} @change=${(event: Event) => { const value = Number((event.target as HTMLInputElement).value); if (Number.isFinite(value) && Math.abs(value) < 10000 && ((key !== "w" && key !== "h") || value >= 0.25)) this.setRoom({ ...sel, [key]: value }); }}></label>`) : nothing}
           <label class="field inline grow">
             <span>${t("pin_room")}</span>

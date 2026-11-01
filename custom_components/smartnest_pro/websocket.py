@@ -89,7 +89,7 @@ def ws_get_config(hass: HomeAssistant, connection: websocket_api.ActiveConnectio
 
 @websocket_api.require_admin
 @websocket_api.websocket_command(
-    {vol.Required("type"): "smartnest_pro/config/save", vol.Required("config"): dict}
+    {vol.Required("type"): "smartnest_pro/config/save", vol.Required("config"): dict, vol.Optional("restore", default=False): bool}
 )
 @websocket_api.async_response
 @require_license
@@ -109,8 +109,12 @@ async def ws_save_config(hass: HomeAssistant, connection: websocket_api.ActiveCo
     if not validate_access(config):
         connection.send_error(msg["id"], "invalid_format", "Access settings are malformed")
         return
-    await data["platform"].async_save_config(config)
-    async_dispatcher_send(hass, SIGNAL_CONFIG_UPDATED, config)
+    try:
+        await data["platform"].async_save_config(config, restore=msg.get("restore", False))
+    except ValueError as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
+    async_dispatcher_send(hass, SIGNAL_CONFIG_UPDATED, data["config"])
     connection.send_result(msg["id"])
 
 
@@ -205,6 +209,7 @@ def ws_access_get(hass, connection, msg):
         "areas": [] if policy is None or expired else policy.get("areas", []),
         "entities": [] if policy is None or expired else policy.get("entities", []),
         "guest_expired": expired,
+        "child_mode": bool(policy and policy.get("child_mode")),
         "guest_until": (hass.data[DOMAIN].get("config") or {}).get("access", {}).get("users", {}).get(connection.user.id, {}).get("guest_until") if not connection.user.is_admin else None,
     })
 
@@ -228,13 +233,13 @@ async def ws_action(hass, connection, msg):
         connection.send_error(msg["id"], "too_large", "Action is too large")
         return
     try:
-        await hass.data[DOMAIN]["platform"].action(connection.user, msg["domain"], msg["service"], msg["data"])
+        result = await hass.data[DOMAIN]["platform"].action(connection.user, msg["domain"], msg["service"], msg["data"])
     except ActionDenied as err:
         connection.send_error(msg["id"], "unauthorized", str(err))
     except Exception:
         connection.send_error(msg["id"], "action_failed", "The device did not complete the action")
     else:
-        connection.send_result(msg["id"], {"success": True})
+        connection.send_result(msg["id"], result)
 
 
 @websocket_api.require_admin

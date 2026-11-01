@@ -7,6 +7,7 @@ import { WALL_H, WALL_T, bounds, doorPos, gapTouchesRoom, innerPoint, inside, ro
 import { TvFeed } from "./tv-feed";
 import { item, pieceZ } from "./catalog";
 import type { RoomLive } from "./live";
+import { temperatureColor, validCamera, type CameraSnapshot } from "./upgrade";
 
 interface Colors {
   floor: string;
@@ -105,6 +106,8 @@ export class PlanScene {
   private wallH = WALL_H;
   private lightQuality = false;
   private flatView = false;
+  private hideFrontWalls = false;
+  private heatmap = false;
   private viewBeforeFlat?: { elevation: number; azimuth: number };
   private hemi: THREE.HemisphereLight;
   private sun: THREE.DirectionalLight;
@@ -145,24 +148,39 @@ export class PlanScene {
     this.resize(this.size.w, this.size.h);
   }
 
-  /** A true orthographic overhead projection; walls hide so they cannot cover the rooms. */
-  setFlatView(flat: boolean) {
+  /** Both views share the orthographic projection; glide the pose without rebuilding geometry. */
+  setFlatView(flat: boolean, animate = true) {
     if (this.flatView === flat) return;
     this.flatView = flat;
     cancelAnimationFrame(this.tilt);
     cancelAnimationFrame(this.spin);
-    if (flat) {
-      this.viewBeforeFlat = { elevation: this.elevation, azimuth: this.azimuth };
-      this.elevation = THREE.MathUtils.degToRad(89.99);
-      this.azimuth = 0;
-    } else if (this.viewBeforeFlat) {
-      this.elevation = this.viewBeforeFlat.elevation;
-      this.azimuth = this.viewBeforeFlat.azimuth;
-      this.viewBeforeFlat = undefined;
+    this.tilt = this.spin = 0;
+    const fromElevation = this.elevation, fromAzimuth = this.azimuth;
+    if (flat) this.viewBeforeFlat ??= { elevation: fromElevation, azimuth: fromAzimuth };
+    const toElevation = flat ? THREE.MathUtils.degToRad(89.99) : this.viewBeforeFlat?.elevation ?? THREE.MathUtils.degToRad(VIEWS.normal);
+    const toAzimuth = flat ? 0 : this.viewBeforeFlat?.azimuth ?? THREE.MathUtils.degToRad(DEFAULT_AZIMUTH);
+    // Use the shortest rotation when returning from overhead, including after several full turns.
+    const azimuthDelta = Math.atan2(Math.sin(toAzimuth - fromAzimuth), Math.cos(toAzimuth - fromAzimuth));
+    const apply = (progress: number) => {
+      const eased = progress * progress * (3 - 2 * progress);
+      this.elevation = fromElevation + (toElevation - fromElevation) * eased;
+      this.azimuth = progress === 1 ? toAzimuth : fromAzimuth + azimuthDelta * eased;
+      if (progress === 1 && !flat) this.viewBeforeFlat = undefined;
+      this.placeCamera();
+      this.renderer.render(this.scene, this.camera);
+      this.onRender?.();
+    };
+    if (!animate || this.lightQuality || window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
+      apply(1);
+      return;
     }
-    this.group.children.forEach(child => { if (child.userData.planWall) child.visible = !flat; });
-    this.placeCamera();
-    this.render();
+    const start = performance.now();
+    const step = (now: number) => {
+      const progress = Math.min(1, Math.max(0, (now - start) / 300));
+      apply(progress);
+      this.tilt = progress < 1 ? requestAnimationFrame(step) : 0;
+    };
+    this.tilt = requestAnimationFrame(step);
   }
 
   setPalette(p: Palette) {
@@ -203,6 +221,34 @@ export class PlanScene {
     this.camera.position.copy(this.target).add(off);
     this.camera.lookAt(this.target);
     this.camera.updateMatrixWorld();
+    this.updateWallVisibility();
+  }
+
+  private updateWallVisibility() {
+    for (const child of this.group.children) {
+      if (!child.userData.planWall) continue;
+      const dx = child.position.x - this.target.x, dz = child.position.z - this.target.z;
+      const front = dx * Math.sin(this.azimuth) + dz * Math.cos(this.azimuth) > 0.05;
+      child.visible = !this.flatView && !(this.hideFrontWalls && front);
+    }
+  }
+  setFrontWallsHidden(hidden: boolean) {
+    if (this.hideFrontWalls === hidden) return;
+    this.hideFrontWalls = hidden; this.updateWallVisibility(); this.render();
+  }
+  setHeatmap(enabled: boolean) {
+    if (this.heatmap === enabled) return;
+    this.heatmap = enabled; this.setEffects(this.lastLives);
+  }
+  cameraSnapshot(): CameraSnapshot {
+    return { x: this.target.x, y: this.target.z, zoom: this.camera.zoom, azimuth: this.azimuthDeg, elevation: THREE.MathUtils.radToDeg(this.elevation) };
+  }
+  restoreCamera(value: unknown): boolean {
+    if (!validCamera(value)) return false;
+    cancelAnimationFrame(this.tween); cancelAnimationFrame(this.spin); cancelAnimationFrame(this.tilt);
+    this.target.set(value.x, 0, value.y); this.camera.zoom = value.zoom;
+    this.azimuth = THREE.MathUtils.degToRad(value.azimuth); this.elevation = THREE.MathUtils.degToRad(value.elevation);
+    this.camera.updateProjectionMatrix(); this.placeCamera(); this.render(); return true;
   }
 
   /** Rebuilds the floor's meshes. Call when the plan itself changes, not for state changes. */
@@ -376,6 +422,7 @@ export class PlanScene {
       const col = m.base.clone();
       if (live.climate === "cool") col.lerp(COOL, 0.32);
       else if (live.climate === "heat") col.lerp(WARM, 0.3);
+      if (this.heatmap && live.temperatureC !== undefined) col.lerp(new THREE.Color(temperatureColor(live.temperatureC)), 0.65);
       const mark = this.marks.get(live.roomId);
       if (mark === "on") col.lerp(pick, 0.6);
       else if (mark === "dim") col.multiplyScalar(0.72);

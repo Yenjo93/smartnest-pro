@@ -22,7 +22,8 @@ import {
   mdiRotateRight,
 } from "@mdi/js";
 import type { Ctx } from "../ctx";
-import type { PlanFloor } from "../types";
+import type { Hass, PlanFloor } from "../types";
+import { deviceTelemetry, validCamera, type DeviceTelemetry } from "./upgrade";
 import { shared } from "../styles";
 import { entityIcon, icon } from "../ui/icon";
 import { noMenu, onHold, hasLevel } from "../ui/hold";
@@ -55,8 +56,9 @@ const readPref = (k: string): string | null => {
 const writePref = (k: string, v: string) => {
   try {
     localStorage.setItem(k, v);
+    return true;
   } catch {
-    /* not available: the choice just isn't remembered */
+    return false;
   }
 };
 const colorModeCount = (ring: string | undefined, id: string, normal: number) => (ring === `${id}|color` ? COLORS.length : normal);
@@ -98,6 +100,61 @@ export class SnFloorplan extends LitElement {
   @state() private viewMenu = false;
   @state() private flat: boolean | undefined = readPref("sn-plan-flat") === null ? undefined : readPref("sn-plan-flat") === "1";
   private lastHass?: unknown;
+  @state() private hideFrontWalls = readPref("sn-plan-hide-front-walls") === "1";
+  @state() private heatmap = readPref("sn-plan-heatmap") === "1";
+  @state() private statusMarks = readPref("sn-plan-status-marks") !== "0";
+  @state() private powerLabels = readPref("sn-plan-power-labels") === "1";
+  private telemetryHass?: Hass;
+  private telemetryCache = new Map<string, DeviceTelemetry>();
+  private timerTick?: number;
+  private timerReadAt = Date.now();
+  private timerPollAt = 0;
+  private timerLoading = false;
+  private timerFetched = false;
+  private focusRequest = 0;
+
+  connectedCallback() {
+    super.connectedCallback();
+    window.addEventListener("sn-focus-entity", this.externalFocus);
+    this.timerTick = window.setInterval(() => {
+      if (document.hidden || !this.isConnected || this.pick) return;
+      const active=Object.entries(this.timers).map(([id])=>[id,this.remaining(id)] as const);
+      if(active.some(([,remaining])=>remaining<=0)){this.timers=Object.fromEntries(active.filter(([,remaining])=>remaining>0));this.timerReadAt=Date.now();}
+      if (active.some(([,remaining])=>remaining>0)) this.requestUpdate();
+      if (Date.now() - this.timerPollAt > 30000) void this.refreshTimers();
+    }, 1000);
+  }
+  private telemetry(id: string) {
+    if (this.telemetryHass !== this.ctx.hass) { this.telemetryHass = this.ctx.hass; this.telemetryCache.clear(); }
+    if (!this.telemetryCache.has(id)) this.telemetryCache.set(id, deviceTelemetry(this.ctx.hass, id));
+    return this.telemetryCache.get(id)!;
+  }
+  private remaining(id: string) { return Math.max(0, (this.timers[id] ?? 0) - (Date.now()-this.timerReadAt)/1000); }
+  private countdown(id: string) { const seconds=Math.ceil(this.remaining(id)); return `${Math.floor(seconds/60)}:${String(seconds%60).padStart(2,'0')}`; }
+  private async refreshTimers() {
+    if (this.timerLoading || this.pick || !this.ctx?.hass) return;
+    this.timerLoading = true; this.timerPollAt = Date.now();
+    try { const timers=await this.ctx.hass.callWS<Record<string,number>>({type:'smartnest_pro/timer/list'}); if(this.isConnected){this.timers=Object.fromEntries(Object.entries(timers).filter(([,seconds])=>typeof seconds==='number'&&Number.isFinite(seconds)&&seconds>0));this.timerReadAt=Date.now();} }
+    catch { /* Keep the last known deadline; never replace it with a fabricated duration. */ }
+    finally { this.timerLoading=false; }
+  }
+  private cameraKey() { return `sn-plan-camera.${this.ctx.hass.user?.id??'guest'}.${this.floor?.id??''}.${this.focusRoom??'floor'}`; }
+  private saveCamera() { if(!this.scene)return;const saved=writePref(this.cameraKey(),JSON.stringify(this.scene.cameraSnapshot()));this.ctx.toast(saved?this.text("تم حفظ زاوية الغرفة أو الطابق لهذه الشاشة.","Camera view saved for this room or floor on this screen."):this.text("تعذّر حفظ الزاوية؛ تخزين المتصفح غير متاح.","Could not save the view; browser storage is unavailable."));this.viewMenu=false; }
+  private restoreCamera() {
+    try { const saved=JSON.parse(readPref(this.cameraKey())??'null');if(!validCamera(saved)||!this.scene){this.ctx.toast(this.text("ما في زاوية محفوظة لهذا المكان.","No saved camera view for this location."));return;}this.flat=false;writePref('sn-plan-flat','0');this.scene.setFlatView(false);this.scene.restoreCamera(saved);this.viewMenu=false; }
+    catch { this.ctx.toast(this.text("تعذّر قراءة الزاوية المحفوظة.","Saved camera view could not be read.")); }
+  }
+  private externalFocus = async (event: Event) => {
+    if(this.pick||this.big||!this.ctx?.hass)return;
+    const id=(event as CustomEvent<{entityId?:string}>).detail?.entityId;if(!id||!this.ctx.hass.states[id])return;
+    const request=++this.focusRequest;
+    const floor=this.ctx.config.plan.floors.find(f=>(f.furniture??[]).some(p=>p.entity===id)||placedDevices(this.ctx.hass,this.ctx.config,f).some(p=>p.id===id));
+    if(!floor){this.ctx.toast(this.text("الجهاز غير مربوط بمكان على المخطط.","This device has no location on the plan."));return;}
+    this.floorId=floor.id;this.ring=undefined;await this.updateComplete;await this.ensureScene();
+    if(request!==this.focusRequest||!this.isConnected)return;this.sync();
+    const furniture=floor.furniture?.find(p=>p.entity===id),position=furniture??placedDevices(this.ctx.hass,this.ctx.config,floor).find(p=>p.id===id);
+    if(position)this.focusDevice(id,position);
+  };
 
   private get isFlat() {
     return this.flat ?? (this.ctx.config.settings as { plan_view?: string }).plan_view === "2d";
@@ -146,6 +203,9 @@ export class SnFloorplan extends LitElement {
   disconnectedCallback() {
     super.disconnectedCallback();
     this.resize.disconnect();
+    this.focusRequest++;
+    clearInterval(this.timerTick);
+    window.removeEventListener("sn-focus-entity", this.externalFocus);
     this.scene?.dispose();
     this.scene = undefined;
     this.loading = undefined;
@@ -181,6 +241,7 @@ export class SnFloorplan extends LitElement {
   }
 
   updated() {
+    if (!this.timerFetched && this.ctx?.hass && !this.pick) { this.timerFetched=true; void this.refreshTimers(); }
     if (this.floor?.rooms.length) this.ensureScene();
     this.sync();
   }
@@ -191,7 +252,7 @@ export class SnFloorplan extends LitElement {
     const floor = this.floor;
     if (!scene || !floor) return;
     scene.setQuality(this.lightQuality);
-    scene.setFlatView(this.isFlat);
+    scene.setFlatView(this.isFlat, false);
     if (this.palette !== this.ctx.palette) {
       this.palette = this.ctx.palette;
       scene.setPalette(this.ctx.palette);
@@ -205,6 +266,8 @@ export class SnFloorplan extends LitElement {
       this.lastHass = undefined;
       scene.build(floor);
     }
+    scene.setFrontWallsHidden(this.hideFrontWalls);
+    scene.setHeatmap(this.heatmap && !this.pick);
     const lives = this.lives(floor);
     const alerts = this.pick ? [] : cameraAlerts(this.ctx.hass, floor);
     const marks: Record<string, Mark> = {};
@@ -420,22 +483,18 @@ export class SnFloorplan extends LitElement {
   }
 
   private async openRing(id: string) {
-    this.ring = id;
-    this.timerMenu = false;
-    try {
-      this.timers = await this.ctx.hass.callWS<Record<string, number>>({ type: "smartnest_pro/timer/list" });
-    } catch {
-      this.timers = {};
-    }
+    this.ring = id; this.timerMenu = false; await this.refreshTimers();
   }
 
-  private setTimer(id: string, minutes?: number) {
-    const hass = this.ctx.hass;
-    if (minutes) hass.callWS({ type: "smartnest_pro/timer/set", entity_id: id, minutes }).catch(() => this.ctx.toast(this.ctx.t("save_failed")));
-    else hass.callWS({ type: "smartnest_pro/timer/cancel", entity_id: id });
-    this.timers = { ...this.timers, [id]: minutes ? minutes * 60 : 0 };
-    this.timerMenu = false;
-    if (minutes) this.ctx.toast(this.ctx.t("timer_set", { n: minutes }));
+  private async setTimer(id: string, minutes?: number) {
+    try {
+      const result=await this.ctx.hass.callWS<{preview?:boolean}>(minutes?{type:'smartnest_pro/timer/set',entity_id:id,minutes}:{type:'smartnest_pro/timer/cancel',entity_id:id});
+      if(result?.preview)return;
+      const current=Object.fromEntries(Object.keys(this.timers).map(key=>[key,this.remaining(key)]));
+      if(minutes)current[id]=minutes*60;else delete current[id];
+      this.timers=current;this.timerReadAt=Date.now();this.timerMenu=false;
+      if(minutes)this.ctx.toast(this.ctx.t('timer_set',{n:minutes}));
+    } catch { this.ctx.toast(this.ctx.t('save_failed')); }
   }
 
   private ringView(id: string, left: number, top: number) {
@@ -443,7 +502,7 @@ export class SnFloorplan extends LitElement {
     const s = hass.states[id];
     const d = domainOf(id);
     const on = isOn(s);
-    const left_ = this.timers[id];
+    const left_ = this.remaining(id);
     type Btn = { icon: string; label: string; run: () => void; active?: boolean; color?: string };
     const btns: Btn[] = [];
     if (hasLevel(id, s)) btns.push({ icon: mdiTune, label: t("brightness"), run: () => ((this.ring = undefined), this.ctx.openLevel(id)) });
@@ -489,10 +548,10 @@ export class SnFloorplan extends LitElement {
       ${this.timerMenu
         ? html`<div class="timer-menu">
             ${TIMER_MINUTES.map((m) => html`<button @click=${() => this.setTimer(id, m)}>${m < 60 ? `${m}m` : `${m / 60}h`}</button>`)}
-            ${left_ ? html`<button class="off" @click=${() => this.setTimer(id)}>${icon(mdiClose, 14)}</button>` : nothing}
+            ${left_ ? html`<button aria-label=${this.text("تمديد 15 دقيقة", "Extend by 15 minutes")} @click=${() => this.setTimer(id, Math.min(1440, Math.ceil(left_/60)+15))}>+15m</button><button class="off" aria-label=${this.text("إلغاء المؤقت", "Cancel timer")} @click=${() => this.setTimer(id)}>${icon(mdiClose, 14)}</button>` : nothing}
           </div>`
         : nothing}
-      <span class="ring-name">${nameOf(hass, id)}${left_ ? html` · ${Math.ceil(left_ / 60)}m` : nothing}</span>
+      <span class="ring-name">${nameOf(hass, id)}${left_ ? html` · ${this.countdown(id)}` : nothing}</span>
     </div>`;
   }
 
@@ -524,6 +583,8 @@ export class SnFloorplan extends LitElement {
     const view = scene?.viewRect();
     const floors = config.plan.floors;
     const ringDev = this.ring?.split("|")[0];
+    const positions = new Map(placedDevices(hass, config, floor).map(d=>[d.id,{x:d.x,y:d.y}]));
+    for(const piece of floor.furniture??[])if(piece.entity&&hass.states[piece.entity])positions.set(piece.entity,{x:piece.x,y:piece.y});
 
     return html`
       <div class="canvas" @contextmenu=${(e: Event) => e.preventDefault()} @pointerdown=${this.down} @pointermove=${this.move} @pointerup=${this.up} @pointercancel=${this.up} @wheel=${this.wheel}>
@@ -608,6 +669,15 @@ export class SnFloorplan extends LitElement {
                   </button>`
                 : nothing}`;
             })}
+            ${(this.pick?[]:[...positions]).map(([id,position])=>{
+              const telemetry=this.telemetry(id),p=scene.project(position.x,position.y,.42),remaining=this.remaining(id);
+              const lowBattery=this.statusMarks&&telemetry.battery!==undefined&&telemetry.battery<=20;
+              const unavailable=this.statusMarks&&telemetry.unavailable;
+              const power=this.powerLabels&&telemetry.watts!==undefined;
+              if(!lowBattery&&!unavailable&&!power&&!remaining)return nothing;
+              const label=[unavailable?this.text("غير متصل","Unavailable"):undefined,lowBattery?`🔋 ${Math.round(telemetry.battery!)}%`:undefined,power?`${Math.round(telemetry.watts!)} W`:undefined].filter(Boolean).join(' · ');
+              return html`<div class="telemetry-label" style="left:${p.left}px;top:${p.top}px">${label?html`<button @click=${()=>this.ctx.openEntity(id)} aria-label=${nameOf(hass,id)+' '+label}>${label}</button>`:nothing}${remaining?html`<button class="timer-countdown" aria-label=${this.text("المؤقت المتبقي للجهاز ","Remaining timer for ")+nameOf(hass,id)+' '+this.countdown(id)} @click=${()=>{this.ringAt=position;void this.openRing(id);}}>◷ ${this.countdown(id)}</button>`:nothing}</div>`;
+            })}
             ${ringDev && (devices.some((d) => d.id === ringDev) || this.ringAt)
               ? (() => {
                   const d = devices.find((x) => x.id === ringDev) ?? this.ringAt!;
@@ -626,6 +696,7 @@ export class SnFloorplan extends LitElement {
           </div>`
         : nothing}
 
+      ${this.heatmap&&!this.pick?html`<div class="heatmap-legend">${this.text("حرارة الغرف: أزرق بارد ≤16°C · أحمر دافئ ≥30°C. بلا لون عند غياب قراءة بوحدة معروفة.","Room temperature: blue cool ≤16°C · red warm ≥30°C. No color without a known-unit reading.")}</div>`:nothing}
       <div class="ui tools">
         <button class="tool" aria-pressed=${this.isFlat} title=${this.text("تبديل عرض المخطط", "Switch plan view")} @click=${() => { this.flat = !this.isFlat; writePref("sn-plan-flat", this.flat ? "1" : "0"); this.scene?.setFlatView(this.flat); }}>${this.isFlat ? "2D" : "3D"}</button>
         ${editing && !this.pick
@@ -668,6 +739,7 @@ export class SnFloorplan extends LitElement {
                     <span class="angle" style="--a:${VIEW_ANGLES[k]}deg"></span>${t(`view_${k}` as const)}
                   </button>`,
                 )}
+                ${!this.pick?html`<button @click=${()=>this.saveCamera()}>${this.text("حفظ زاوية هذا المكان", "Save camera for this location")}</button><button @click=${()=>this.restoreCamera()}>${this.text("استرجاع الزاوية", "Restore saved camera")}</button><button aria-pressed=${this.hideFrontWalls} @click=${()=>{this.hideFrontWalls=!this.hideFrontWalls;writePref('sn-plan-hide-front-walls',this.hideFrontWalls?'1':'0');}}>${this.text("إخفاء الجدران الأمامية", "Hide front walls")} ${this.hideFrontWalls?'✓':''}</button><button aria-pressed=${this.heatmap} @click=${()=>{this.heatmap=!this.heatmap;writePref('sn-plan-heatmap',this.heatmap?'1':'0');}}>${this.text("ألوان حرارة الغرف", "Room temperature colors")} ${this.heatmap?'✓':''}</button><button aria-pressed=${this.statusMarks} @click=${()=>{this.statusMarks=!this.statusMarks;writePref('sn-plan-status-marks',this.statusMarks?'1':'0');}}>${this.text("الاتصال والبطاريات", "Connectivity and batteries")} ${this.statusMarks?'✓':''}</button><button aria-pressed=${this.powerLabels} @click=${()=>{this.powerLabels=!this.powerLabels;writePref('sn-plan-power-labels',this.powerLabels?'1':'0');}}>${this.text("قدرة الأجهزة", "Device power")} ${this.powerLabels?'✓':''}</button>`:nothing}
               </div>`
             : nothing}
         </div>
@@ -1067,6 +1139,7 @@ export class SnFloorplan extends LitElement {
         z-index: 4;
       }
       /* Beside the minimap, leaving the bottom-right for the (longer, in edit mode) toolbar. */
+      .telemetry-label{position:absolute;transform:translate(-50%,-28px);display:flex;gap:3px;white-space:nowrap;pointer-events:auto;z-index:3}.telemetry-label button{border:1px solid var(--sn-glass-border);background:var(--sn-glass-strong);color:var(--sn-text);font:inherit;font-size:10px;padding:4px 6px;border-radius:7px;cursor:pointer}.heatmap-legend{position:absolute;bottom:65px;inset-inline:18px;max-width:560px;pointer-events:none;font-size:10px;line-height:1.7;color:var(--sn-text);padding:7px 10px;border-radius:9px;background:var(--sn-glass-strong)}.view-menu{max-height:min(65vh,520px);overflow:auto;z-index:30}
       .piece-label { position: absolute; transform: translate(-50%, 12px); color: var(--sn-text); background: var(--sn-bg, #26232c); border: 1px solid var(--sn-glass-border); border-radius: 7px; padding: 3px 6px; font-size: 10px; pointer-events: none; white-space: nowrap; }
       .plan-loading { position: absolute; inset: 0; display: grid; place-items: center; padding: 36px; color: var(--sn-text-dim); font-size: 12px; pointer-events: none; }
       .plan-loading svg { width: 100%; height: 80%; fill: color-mix(in srgb, var(--sn-accent) 12%, transparent); stroke: var(--sn-text-dim); stroke-width: .05; }

@@ -10,6 +10,12 @@ A Home Assistant dashboard panel: a live 3D floor plan of your home, energy, cli
 
 Integration domain: `smartnest_pro`. SmartNest Pro requires an active customer license.
 
+## What's new in 0.17.0
+
+Completes the 50-item usability package: reviewed setup suggestions, complete room duplication, saved camera views and plan overlays, real device-state confirmation, per-screen favorites, group controls, hourly energy tariffs, usage maintenance, child mode, safer restore, and connection recovery. [دليل التحسينات الخمسين بالعربية](docs/experience-0.17.md).
+
+Existing layouts and keys are preserved. Download the update and restart Home Assistant before using the new backend features. Device confirmation reflects HA-reported state; energy breakdowns require recorded statistics.
+
 ## What's new in 0.16.0
 
 A logo-led first-run welcome, Home Center, backup and version restore, private draft previews, expanded floor-plan editing, per-user/screen preferences, notifications and maintenance, real energy comparisons and budgets, SmartNest access scopes and guests, persistent scene schedules, and owner license renewal/contact notes. See the [57-feature implementation guide](docs/experience-0.16.md).
