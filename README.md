@@ -1,5 +1,11 @@
 # SmartNest
 
+[العربية: الصور وطريقة التثبيت والاستخدام](docs/README.ar.md) · [الموقع والمعاينة](https://smartnest.pro/#dashboard-preview)
+
+![SmartNest — Arabic demo floor plan](docs/images/dashboard-floorplan-ar.jpg)
+
+*Actual screenshots from the bundled demo home; rooms, devices and readings are sample data.*
+
 A Home Assistant dashboard panel: a live 3D floor plan of your home, energy, climate, favorite devices, scenes and a room panel. Beige, dark and Night purple themes, English and Arabic (RTL), and layouts for wall tablets, desktops and phones.
 
 Integration domain: `smartnest_pro`. SmartNest Pro requires an active customer license.
@@ -20,7 +26,7 @@ The built panel (`custom_components/smartnest_pro/frontend/`) is committed, so H
 
 ## Online licensing
 
-Owners can create, copy/download and revoke keys at [the private administration page](https://licenses.smartnest.pro/admin). Plans: 3 calendar months, 6 calendar months, 1 year or lifetime, starting at issuance. The panel password is stored privately on the owner device and never committed.
+Owners can create, copy/download and revoke keys at [the private administration page](https://licenses.smartnest.pro/admin). Public plans: a free one-month trial or one year. Owners can also issue private lifetime keys, which are not offered for sale. Validity starts at issuance. The panel password is stored privately on the owner device and never committed.
 
 For the smartnest.pro Cloudflare deployment, see [Cloudflare setup](license-service/cloudflare/README.md).
 

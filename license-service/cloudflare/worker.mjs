@@ -119,7 +119,7 @@ async function handle(request, env) {
   const publicHost = url.hostname === 'smartnest.pro' || ['localhost', '127.0.0.1'].includes(url.hostname);
   const publicPath = url.pathname === '/' ? '/' : url.pathname.replace(/\/$/, '');
   if (request.method === 'GET' && publicHost && ['/', '/license', '/renew', '/support', '/patreon', '/privacy'].includes(publicPath)) return htmlPage(renderPublicPage(publicPath));
-  if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname.startsWith('/brand/') && env.ASSETS) return env.ASSETS.fetch(request);
+  if ((request.method === 'GET' || request.method === 'HEAD') && (url.pathname.startsWith('/brand/') || url.pathname.startsWith('/showcase/')) && env.ASSETS) return env.ASSETS.fetch(request);
   if (url.search && !(request.method === 'GET' && url.pathname === '/v1/admin/requests')) return reply(404, { error: 'not_found' });
   if (url.pathname === '/v1/public/requests' || url.pathname === '/v1/public/site') {
     const result = await handlePublicRequests(request, env);
