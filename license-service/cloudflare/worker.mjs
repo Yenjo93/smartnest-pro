@@ -1,3 +1,5 @@
+import { renderPublicPage } from './public-page.mjs';
+import { handlePublicRequests, handleAdminRequests } from './requests.mjs';
 import { ADMIN_HTML } from './admin-page.mjs';
 import { panelConfigured, sameOrigin, passwordMatches, sessionCookie, clearCookie, sessionValid, planExpiry } from './admin-auth.mjs';
 /** SmartNest license API for Cloudflare Workers + D1. No customer secrets are logged. */
@@ -83,20 +85,20 @@ async function validate(data, db) {
   return reply(403, { valid: false, reason });
 }
 
-async function adminPage() {
-  const hashes = async (tag) => Promise.all([...ADMIN_HTML.matchAll(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>', 'g'))].map(async match => {
+async function htmlPage(markup) {
+  const hashes = async (tag) => Promise.all([...markup.matchAll(new RegExp('<' + tag + '[^>]*>([\\s\\S]*?)</' + tag + '>', 'g'))].map(async match => {
     const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(match[1])));
     return "'sha256-" + btoa(String.fromCharCode(...bytes)) + "'";
   }));
   const scripts = await hashes('script');
   const styles = await hashes('style');
-  return new Response(ADMIN_HTML, { headers: {
+  return new Response(markup, { headers: {
     'Content-Type': 'text/html; charset=utf-8',
     'Cache-Control': 'no-store',
     'Referrer-Policy': 'no-referrer',
     'X-Content-Type-Options': 'nosniff',
     'X-Frame-Options': 'DENY',
-    'Content-Security-Policy': "default-src 'none'; script-src " + scripts.join(' ') + "; style-src " + styles.join(' ') + "; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
+    'Content-Security-Policy': "default-src 'none'; script-src " + scripts.join(' ') + "; style-src " + styles.join(' ') + "; connect-src 'self'; img-src 'self' data:; font-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'",
   } });
 }
 
@@ -114,8 +116,16 @@ function customerMetadata(data) {
 
 async function handle(request, env) {
   const url = new URL(request.url);
-  if (url.search) return reply(404, { error: 'not_found' });
-  if (request.method === 'GET' && (url.pathname === '/admin' || url.pathname === '/admin/')) return adminPage();
+  const publicHost = url.hostname === 'smartnest.pro' || ['localhost', '127.0.0.1'].includes(url.hostname);
+  const publicPath = url.pathname === '/' ? '/' : url.pathname.replace(/\/$/, '');
+  if (request.method === 'GET' && publicHost && ['/', '/license', '/renew', '/support', '/patreon', '/privacy'].includes(publicPath)) return htmlPage(renderPublicPage(publicPath));
+  if ((request.method === 'GET' || request.method === 'HEAD') && url.pathname.startsWith('/brand/') && env.ASSETS) return env.ASSETS.fetch(request);
+  if (url.search && !(request.method === 'GET' && url.pathname === '/v1/admin/requests')) return reply(404, { error: 'not_found' });
+  if (url.pathname === '/v1/public/requests' || url.pathname === '/v1/public/site') {
+    const result = await handlePublicRequests(request, env);
+    if (result) return result;
+  }
+  if (request.method === 'GET' && (url.pathname === '/admin' || url.pathname === '/admin/')) return htmlPage(ADMIN_HTML);
   if (request.method === 'GET' && url.pathname === '/') return Response.redirect(url.origin + '/admin', 302);
   if (request.method === 'GET' && url.pathname === '/health') return reply(200, { ok: true });
   if (!env.DB || typeof env.SMARTNEST_ADMIN_TOKEN !== 'string' || env.SMARTNEST_ADMIN_TOKEN.length < 32 || !env.RATE_LIMITER) return reply(503, { error: 'unavailable' });
@@ -144,6 +154,8 @@ async function handle(request, env) {
     if (request.method !== 'GET' && !sameOrigin(request)) return reply(403, { error: 'forbidden' });
   }
   if (request.method === 'GET' && url.pathname === '/v1/admin/session') return reply(200, { authenticated: true });
+  const requestAdmin = await handleAdminRequests(request, env);
+  if (requestAdmin) return requestAdmin;
   if (request.method === 'GET' && url.pathname === '/v1/admin/licenses') {
     const result = await env.DB.prepare('SELECT id,created_at,expires_at,installation_id,revoked,customer_name,customer_contact,notes FROM licenses ORDER BY created_at DESC').all();
     return reply(200, { licenses: result.results });
