@@ -210,4 +210,150 @@ class BackendTests(unittest.IsolatedAsyncioTestCase):
         await self.runtime.audit('owner', 'light', 'state_changed', ['light.kitchen'], True, from_state='off', to_state='on', state_event=True)
         self.assertEqual(self.runtime.events, [])
 
+    async def test_action_confirms_reported_state_and_persists_confirmation(self):
+        states = {'light.kitchen': types.SimpleNamespace(state='off', attributes={})}
+        self.hass.states.get = states.get
+        async def call(domain, service, data, **kwargs):
+            self.calls.append((domain, service, data, kwargs))
+            states['light.kitchen'] = types.SimpleNamespace(state='on', attributes={})
+        self.hass.services.async_call = call
+        result = await self.runtime.action(self.owner, 'light', 'turn_on', {'entity_id': 'light.kitchen'})
+        self.assertEqual(result, {'success': True, 'confirmation': 'confirmed', 'confirmed_entities': ['light.kitchen'], 'unconfirmed_entities': []})
+        self.assertEqual(self.runtime.events[-1]['confirmation'], 'confirmed')
+        self.assertEqual(self.runtime.events[-1]['user'], 'owner')
+
+    async def test_service_ack_without_expected_state_is_unconfirmed_and_bounded(self):
+        self.hass.states.get = lambda identifier: types.SimpleNamespace(state='off', attributes={})
+        with patch.object(sys.modules['smartnest_backend.action_feedback'], 'CONFIRM_TIMEOUT', .02):
+            result = await self.runtime.action(self.owner, 'light', 'turn_on', {'entity_id': 'light.kitchen'})
+        self.assertEqual(result['confirmation'], 'unconfirmed')
+        self.assertEqual(result['unconfirmed_entities'], ['light.kitchen'])
+        self.assertEqual(len(self.calls), 1)
+        self.assertFalse(self.runtime.events[-1]['success'])
+        self.assertEqual(self.runtime.events[-1]['confirmation'], 'unconfirmed')
+
+    async def test_scene_is_accepted_without_claiming_physical_confirmation(self):
+        self.hass.states.get = lambda identifier: types.SimpleNamespace(state='off', attributes={})
+        result = await self.runtime.action(self.owner, 'scene', 'turn_on', {'entity_id': 'scene.sleep'})
+        self.assertEqual(result['confirmation'], 'accepted')
+        self.assertEqual(result['confirmed_entities'], [])
+        self.assertTrue(self.runtime.events[-1]['success'])
+
+    async def test_attribute_commands_do_not_confirm_from_power_state_alone(self):
+        state = types.SimpleNamespace(state='on', attributes={'brightness': 10})
+        self.hass.states.get = lambda identifier: state
+        with patch.object(sys.modules['smartnest_backend.action_feedback'], 'CONFIRM_TIMEOUT', .02):
+            result = await self.runtime.action(self.owner, 'light', 'turn_on', {'entity_id': 'light.kitchen', 'brightness': 200})
+        self.assertEqual(result['confirmation'], 'unconfirmed')
+        state.attributes['brightness'] = 200
+        result = await self.runtime.action(self.owner, 'light', 'turn_on', {'entity_id': 'light.kitchen', 'brightness': 200})
+        self.assertEqual(result['confirmation'], 'confirmed')
+        # Unsupported colour/effect state representations must not be guessed.
+        result = await self.runtime.action(self.owner, 'light', 'turn_on', {'entity_id': 'light.kitchen', 'rgb_color': [1, 2, 3]})
+        self.assertEqual(result['confirmation'], 'accepted')
+
+    async def test_child_policy_blocks_sensitive_explicit_targets_and_keeps_light_control(self):
+        policy = self.config['access']['users']['guest']
+        policy.update(child_mode=True, entities=['scene.sleep', 'script.away', 'lock.front', 'alarm_control_panel.home', 'button.reset', 'remote.tv'])
+        self.hass.states.get = lambda identifier: types.SimpleNamespace(state='off', attributes={})
+        for domain, service, identifier in [('scene', 'turn_on', 'scene.sleep'), ('script', 'turn_on', 'script.away'), ('lock', 'unlock', 'lock.front'), ('alarm_control_panel', 'alarm_disarm', 'alarm_control_panel.home'), ('button', 'press', 'button.reset'), ('remote', 'send_command', 'remote.tv')]:
+            with self.subTest(identifier=identifier), self.assertRaises(platform.ActionDenied):
+                await self.runtime.action(self.guest, domain, service, {'entity_id': identifier})
+        result = await self.runtime.action(self.guest, 'light', 'turn_off', {'entity_id': 'light.kitchen'})
+        self.assertEqual(result['confirmation'], 'confirmed')
+        self.assertTrue(platform.entity_allowed(self.hass, self.config, self.guest, 'lock.front'))
+        policy['child_mode'] = 'yes'
+        self.assertFalse(platform.validate_access(self.config))
+
+    async def test_invalid_imports_never_replace_a_valid_layout(self):
+        before = copy.deepcopy(self.config)
+        cases = [
+            {'version': 2, 'hero': {}, 'settings': {}},
+            {'version': True, 'hero': {}, 'settings': {}},
+            {'hero': {}, 'settings': {}, 'plan': {'floors': 'broken'}},
+            {'hero': {}, 'settings': {}, 'home': {'devices': 'light.kitchen'}},
+            {'hero': {}, 'settings': {}, 'plan': {'floors': [{'id': 'f', 'rooms': [{'id': 'r', 'x': 0, 'y': 0, 'w': -1, 'h': 4}]}]}},
+            {'hero': {}, 'settings': {}, 'plan': {'floors': [{'id': 'f', 'walls': [{'id': 'w', 'x1': 0, 'y1': 0, 'x2': float('nan'), 'y2': 1}]}]}},
+            {'hero': {}, 'settings': {}, 'plan': {'devices': {'light.kitchen': {'floor': 'f', 'x': 'bad', 'y': 0}}}},
+            {'hero': {}, 'settings': {}, 'access': {'users': {'child': {'child_mode': 1}}}},
+        ]
+        for config in cases:
+            with self.subTest(config=config), self.assertRaises(ValueError):
+                await self.runtime.async_save_config(config, restore=True)
+            self.assertEqual(self.hass.data[DOMAIN]['config'], before)
+            self.assertEqual(self.runtime.history, [])
+
+    async def test_restore_preserves_current_access_and_pin_and_snapshots_before_replace(self):
+        self.config['settings']['kiosk_pin'] = 'current-pin'
+        incoming = {'version': 1, 'hero': {}, 'settings': {'home_name': 'Restored', 'kiosk_pin': 'imported-pin'}, 'access': {'users': {}}, 'plan': {'floors': [], 'devices': {}, 'hidden': []}}
+        await self.runtime.async_save_config(incoming, restore=True)
+        saved = self.hass.data[DOMAIN]['config']
+        self.assertEqual(saved['settings']['kiosk_pin'], 'current-pin')
+        self.assertEqual(saved['access'], self.config['access'])
+        self.assertEqual(self.runtime.history[-1]['reason'], 'before_restore')
+        self.assertEqual(self.runtime.history[-1]['config']['settings']['kiosk_pin'], 'current-pin')
+        self.assertEqual(incoming['settings']['kiosk_pin'], 'imported-pin')
+
+    async def test_restore_cannot_install_access_or_pin_when_current_has_none(self):
+        self.hass.data[DOMAIN]['config'] = {'hero': {}, 'settings': {}}
+        await self.runtime.async_save_config({'hero': {}, 'settings': {'kiosk_pin': 'imported'}, 'access': {'users': {}}}, restore=True)
+        self.assertNotIn('kiosk_pin', self.hass.data[DOMAIN]['config']['settings'])
+        self.assertNotIn('access', self.hass.data[DOMAIN]['config'])
+
+    async def test_version_upgrade_snapshot_is_persistent_and_once_per_version(self):
+        await self.runtime.snapshot_version('0.17.0')
+        self.assertEqual(self.runtime.history[-1]['reason'], 'before_update')
+        self.assertEqual(self.runtime.history[-1]['version'], 'legacy')
+        self.assertEqual(self.runtime.history[-1]['config'], self.config)
+        restored = platform.Platform(self.hass)
+        await restored.async_load()
+        await restored.snapshot_version('0.17.0')
+        self.assertEqual(len(restored.history), 1)
+        await restored.snapshot_version('0.18.0')
+        self.assertEqual(len(restored.history), 2)
+        self.assertEqual(restored.history[-1]['version'], '0.17.0')
+
+    async def test_new_feature_configuration_rejects_malformed_aliases_and_critical_lists(self):
+        before = copy.deepcopy(self.config)
+        invalid = [
+            {'aliases': {'light.kitchen': 123}},
+            {'aliases': {'light.kitchen': 'Kitchen'}},
+            {'aliases': {'light.kitchen': ['a'] * 9}},
+            {'aliases': {'light.kitchen': ['a' * 61]}},
+            {'aliases': {'light.kitchen': ['']}},
+            {'aliases': {'bad identifier': ['Kitchen']}},
+            {'experience': {'critical_entities': 'light.kitchen'}},
+            {'experience': {'critical_entities': [123]}},
+            {'experience': {'critical_entities': ['bad identifier']}},
+        ]
+        for patch_config in invalid:
+            candidate = {'hero': {}, 'settings': {}, **patch_config}
+            with self.subTest(candidate=candidate), self.assertRaises(ValueError):
+                await self.runtime.async_save_config(candidate)
+            self.assertEqual(self.hass.data[DOMAIN]['config'], before)
+        await self.runtime.async_save_config({'hero': {}, 'settings': {}, 'aliases': {'light.kitchen': ['المطبخ', 'Kitchen light']}, 'experience': {'critical_entities': ['light.kitchen']}})
+
+    async def test_tariff_configuration_rejects_invalid_or_overlapping_hour_periods(self):
+        invalid = [
+            'bad',
+            [{'start': '00:30', 'end': '06:00', 'rate': 1}],
+            [{'start': '24:00', 'end': '06:00', 'rate': 1}],
+            [{'start': '00:00', 'end': '00:00', 'rate': 1}],
+            [{'start': '00:00', 'end': '06:00', 'rate': -1}],
+            [{'start': '00:00', 'end': '06:00', 'rate': True}],
+            [{'start': '00:00', 'end': '06:00', 'rate': float('nan')}],
+            [{'start': '22:00', 'end': '06:00', 'rate': 1}, {'start': '05:00', 'end': '09:00', 'rate': 2}],
+        ]
+        for schedule in invalid:
+            with self.subTest(schedule=schedule), self.assertRaises(ValueError):
+                await self.runtime.async_save_config({'hero': {}, 'settings': {}, 'experience': {'tariff_schedule': schedule}})
+        for schedule in [[{'start': '22:00', 'end': '06:00', 'rate': 0}, {'start': '06:00', 'end': '22:00', 'rate': 2}], [{'start': '00:00', 'end': '24:00', 'rate': 1}]]:
+            await self.runtime.async_save_config({'hero': {}, 'settings': {}, 'experience': {'tariff_schedule': schedule}})
+
+    async def test_usage_maintenance_fields_require_finite_numeric_values(self):
+        for fields in [{'usage_interval': 0}, {'usage_interval': -1}, {'usage_interval': True}, {'usage_interval': float('inf')}, {'usage_baseline': '0'}, {'usage_baseline': float('nan')}, {'usage_entity': 123}]:
+            with self.subTest(fields=fields), self.assertRaises(ValueError):
+                await self.runtime.async_save_config({'hero': {}, 'settings': {}, 'experience': {'maintenance': [{'id': 'filter', **fields}]}})
+        await self.runtime.async_save_config({'hero': {}, 'settings': {}, 'experience': {'maintenance': [{'id': 'filter', 'usage_entity': 'sensor.filter_hours', 'usage_interval': 100, 'usage_baseline': 0}]}})
+
 if __name__ == '__main__': unittest.main()

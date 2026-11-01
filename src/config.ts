@@ -17,7 +17,7 @@ export function normalize(raw: unknown): ProConfig {
   const c = raw as Partial<ProConfig>;
   return {
     version: 1,
-    experience: c.experience && typeof c.experience === "object" ? c.experience : {},
+    experience: c.experience && typeof c.experience === "object" ? {...c.experience,critical_entities:Array.isArray(c.experience.critical_entities)?c.experience.critical_entities.filter(id=>typeof id==='string').slice(0,1000):[]} : {},
     access: c.access && typeof c.access === "object" ? c.access : undefined,
     settings: { ...base.settings, ...(c.settings ?? {}) },
     hero: {
@@ -34,6 +34,7 @@ export function normalize(raw: unknown): ProConfig {
     pages: c.pages && typeof c.pages === "object" ? c.pages : {},
     door: c.door && typeof c.door === "object" ? { ...c.door } : undefined,
     names: c.names && typeof c.names === "object" ? c.names : {},
+    aliases: c.aliases && typeof c.aliases==='object'&&!Array.isArray(c.aliases)?Object.fromEntries(Object.entries(c.aliases).filter(([id,list])=>/^[a-z_]+\.[a-z0-9_]+$/.test(id)&&Array.isArray(list)).slice(0,1000).map(([id,list])=>[id,(list as unknown[]).filter((value):value is string=>typeof value==='string').slice(0,8).map(value=>value.trim().slice(0,60)).filter(Boolean)])):{},
     robots: c.robots && typeof c.robots === "object" ? c.robots : {},
     plan: {
       floors: Array.isArray(c.plan?.floors)

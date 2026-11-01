@@ -26,7 +26,7 @@ import {
 import type { Ctx, SheetSpec } from "./ctx";
 import type { Hass, Palette, PanelInfo, ProConfig } from "./types";
 import { clone, normalize } from "./config";
-import { getPreferences, savePreferences, lightweight, scopedHass, isPreviewMutation, type AccessScope } from "./experience";
+import { getPreferences, savePreferences, lightweight, scopedHass, isPreviewMutation, favoriteIds, searchMatches, searchText, actionNeedsConfirmation, type AccessScope } from "./experience";
 import "./ui/onboarding";
 import { resolveLang, translator } from "./i18n";
 import { areas, nameOf, powerKw, roomInfo, setNameOverrides } from "./ha";
@@ -48,6 +48,7 @@ import "./ui/level";
 import "./ui/pin-pad";
 import "./ui/screensaver";
 import "./plan/floorplan";
+import {placedDevices} from "./plan/live";
 import "./cards/energy-card";
 import "./cards/climate-card";
 import "./cards/devices-card";
@@ -119,6 +120,25 @@ export class SmartNestProPanel extends LitElement {
   @state() private panelOpen = false;
   @state() private width = 1200;
   @state() private query = "";
+  @state() private searchIndex = 0;
+  @state() private connectionLost = false;
+  private boundConnection?: Hass["connection"];
+  private energyRequest=()=>{if(this.live){this.go('energy');}};
+  private connectionReady = () => {
+    const wasOffline=this.connectionLost;this.connectionLost=false;
+    void this.checkLicense().then(()=>{if(this.licenseValid&&(!this.config||this.loadError))void this.load();});
+    if(wasOffline)this.toast(this.hass?.language==='ar'?'رجع الاتصال بـHome Assistant.':'Home Assistant connection restored.');
+  };
+  private connectionDisconnected = () => {this.connectionLost=true;this.actionState='';this.failedAction=undefined;};
+  private bindConnection(){
+    const connection=this.hass?.connection;if(this.boundConnection===connection)return;
+    this.unbindConnection();this.boundConnection=connection;
+    if(!connection)return;this.connectionLost=connection.connected===false;
+    connection.addEventListener?.('ready',this.connectionReady);connection.addEventListener?.('disconnected',this.connectionDisconnected);connection.addEventListener?.('reconnect-error',this.connectionDisconnected);
+  }
+  private unbindConnection(){
+    this.boundConnection?.removeEventListener?.('ready',this.connectionReady);this.boundConnection?.removeEventListener?.('disconnected',this.connectionDisconnected);this.boundConnection?.removeEventListener?.('reconnect-error',this.connectionDisconnected);this.boundConnection=undefined;
+  }
   @state() private loadError?: string;
   @state() private kiosk = kioskFromUrl();
   /** The PIN was entered: editing is open until it's saved or cancelled. */
@@ -168,7 +188,9 @@ export class SmartNestProPanel extends LitElement {
   connectedCallback() {
     super.connectedCallback();
     this.resize.observe(this);
+    this.bindConnection();
     window.addEventListener('sn-open-setup', this.setupRequest);
+    window.addEventListener('sn-open-energy',this.energyRequest);
     window.addEventListener('sn-preferences-change', this.preferencesChanged);
     this.licenseTimer = window.setInterval(() => void this.checkLicense(), 60_000);
     if (this.hass) void this.checkLicense();
@@ -180,6 +202,7 @@ export class SmartNestProPanel extends LitElement {
     super.disconnectedCallback();
     for (const ev of ["pointerdown", "keydown", "wheel"]) window.removeEventListener(ev, this.idle, { capture: true });
     window.removeEventListener('sn-open-setup', this.setupRequest);
+    window.removeEventListener('sn-open-energy',this.energyRequest);
     window.removeEventListener('sn-preferences-change', this.preferencesChanged);
     clearTimeout(this.draftTimer);
     clearTimeout(this.idleTimer);
@@ -194,13 +217,14 @@ export class SmartNestProPanel extends LitElement {
     this.licenseValid = undefined;
     this.config = undefined;
     this.resize.disconnect();
+    this.unbindConnection();
     this.unsub?.();
     this.unsub = undefined;
   }
 
   protected willUpdate(changed: Map<string, unknown>) {
     if (changed.has("hass") && this.hass && this.licenseValid === undefined) void this.checkLicense();
-    if (changed.has("hass")) this.checkDoorbell();
+    if (changed.has("hass")) {this.bindConnection();this.checkDoorbell();}
   }
 
   /** The last doorbell press seen ("" while not ringing); undefined until the first look, so loading doesn't ring. */
@@ -336,7 +360,7 @@ export class SmartNestProPanel extends LitElement {
   }
 
   private async checkLicense() {
-    if (!this.hass || !this.isConnected || this.checkingLicense) return;
+    if (!this.hass || !this.isConnected || this.checkingLicense || this.connectionLost) return;
     this.checkingLicense = true;
     const cycle = this.lifecycle;
     const current = () => this.isConnected && cycle === this.lifecycle;
@@ -465,17 +489,23 @@ export class SmartNestProPanel extends LitElement {
 
   private runAction(domain: string, service: string, data: Record<string, unknown>): Promise<unknown> {
     if (this.previewConfig) { this.toast(this.ctx().rtl ? 'المعاينة لا تشغّل الأجهزة.' : 'Device actions are disabled during preview.'); return Promise.resolve(); }
+    if(this.connectionLost){this.toast(this.hass?.language==='ar'?'الاتصال مقطوع؛ لم يُرسل الأمر.':'Offline; the command was not sent.');return Promise.resolve({success:false,offline:true});}
     const key = JSON.stringify([domain, service, data]);
     const pending = this.pendingActions.get(key);
     if (pending) return pending;
     const ar = resolveLang(this.live?.settings.language ?? 'auto', this.hass?.language ?? 'en') === 'ar';
-    const risky = (domain === 'lock' && ['unlock', 'open'].includes(service)) || (domain === 'alarm_control_panel' && service === 'alarm_disarm');
+    const risky=actionNeedsConfirmation(domain,service,data,this.live?.experience?.critical_entities??[]);
     if (risky && !window.confirm(ar ? 'تأكيد تنفيذ أمر أمان حساس؟' : 'Confirm this sensitive security action?')) return Promise.resolve();
     const work = (async () => {
       this.actionState = ar ? 'جاري تنفيذ الأمر…' : 'Executing…'; this.failedAction = undefined;
       try {
-        const result = await this.hass!.callWS({ type: 'smartnest_pro/action', domain, service, data });
-        this.actionState = ''; this.toast(ar ? 'تم تنفيذ الأمر' : 'Action completed'); return result;
+        this.assertMutationAllowed();
+        const result = await this.hass!.callWS<{success:boolean;confirmation?:string;unconfirmed_entities?:string[]}>({ type: 'smartnest_pro/action', domain, service, data });
+        this.failedAction=undefined;
+        if(result.confirmation==='confirmed'){this.actionState='';this.toast(ar?'تأكدت حالة الجهاز من Home Assistant.':'Device state confirmed by Home Assistant.');}
+        else if(result.confirmation==='unconfirmed'){this.actionState=ar?'قُبل الأمر، لكن حالة بعض الأجهزة لم تتأكد بعد. راجعها قبل تكرار الأمر.':'Command accepted, but some device states are unconfirmed. Check before retrying.';}
+        else {this.actionState='';this.toast(ar?'قُبل الطلب. نتيجة التنفيذ غير متاحة لهذا النوع من الأوامر.':'Request accepted. This action has no verifiable state result.');}
+        return result;
       } catch (error) {
         this.actionState = ar ? 'تعذّر تنفيذ الأمر. تحقّق من اتصال الجهاز وصلاحياتك.' : 'Action failed. Check the device connection and your permissions.';
         this.failedAction = () => this.runAction(domain, service, data);
@@ -491,17 +521,17 @@ export class SmartNestProPanel extends LitElement {
   private ctx(): Ctx {
     let config = this.live!;
     const prefs = getPreferences(this.hass!);
-    if (!this.draft && prefs.favorites_configured) config = { ...config, home: { ...config.home, devices: prefs.favorites.filter(id => !!this.hass!.states[id]) } };
+    if (!this.draft && (prefs.favorites_configured||prefs.screen_favorites!==undefined)) config = { ...config, home: { ...config.home, devices: favoriteIds(prefs).filter(id => !!this.hass!.states[id]) } };
     const safeHass = this.withRoomNames(scopedHass(this.hass!, this.accessScope), config);
     const managedHass = {
       ...safeHass,
       callService: (domain: string, service: string, data: Record<string, unknown> = {}) => this.runAction(domain, service, data),
       callWS: (message: Record<string, any>) => {
-        if (this.previewConfig && isPreviewMutation(String(message.type))) { this.toast(this.ctx().rtl ? 'المعاينة لا تنفذ أوامر أو تحفظ تغييرات.' : 'Preview does not execute actions or publish changes.'); return Promise.resolve({ success: false, preview: true }); }
+        if(isPreviewMutation(String(message.type))){try{this.assertMutationAllowed();}catch(error){const denied=Promise.reject(error);void denied.catch(()=>{});return denied;}}
         return safeHass.callWS(message);
       },
       fetchWithAuth: (path: string, init?: RequestInit) => {
-        if (this.previewConfig && init?.method && !['GET', 'HEAD'].includes(init.method.toUpperCase())) return Promise.resolve(new Response(JSON.stringify({ error: 'preview_read_only' }), { status: 403 }));
+        if(init?.method&&!['GET','HEAD'].includes(init.method.toUpperCase())){try{this.assertMutationAllowed();}catch{return Promise.resolve(new Response(JSON.stringify({error:'mutations_unavailable'}),{status:403}));}}
         return safeHass.fetchWithAuth(path, init);
       },
     } as Hass;
@@ -522,6 +552,10 @@ export class SmartNestProPanel extends LitElement {
       // Kiosk mode: no admin buttons (rename, room settings…) until the PIN is entered.
       isAdmin: !!this.hass!.user?.is_admin && (!this.kiosk || this.unlocked) && !this.previewConfig,
       editing: !!this.draft,
+      childMode: !!this.accessScope?.child_mode,
+      focusEntity: (id)=>this.focusEntity(id),
+      restoreLayout: (next)=>this.restoreLayout(next),
+      previewLayout: (next)=>{if(!this.hass?.user?.is_admin||this.draft||this.connectionLost){this.toast(lang==='ar'?'احفظ أو ألغِ التعديل الحالي قبل معاينة نسخة أخرى.':'Save or cancel current edits before previewing another design.');return;}const safe=clone(next);safe.access=this.config?.access;safe.settings.kiosk_pin=this.config?.settings.kiosk_pin;this.sheet=undefined;this.previewConfig=safe;},
       kiosk: this.kiosk,
       setKiosk: (on) => this.setKiosk(on),
       assetBase: this.panel?.config?.asset_base ?? "/smartnest_pro_static/static/",
@@ -573,6 +607,28 @@ export class SmartNestProPanel extends LitElement {
     });
   }
 
+  private assertMutationAllowed(admin=false):void{
+    if(!this.hass||!this.isConnected||this.licenseValid!==true||this.connectionLost||this.hass.connection.connected===false||this.previewConfig||admin&&!this.hass.user?.is_admin)throw new Error(this.hass?.language==='ar'?'الأوامر والحفظ متوقفان في المعاينة أو عند انقطاع الاتصال.':'Commands and saves are disabled in preview or while disconnected.');
+  }
+  private async focusEntity(id:string){
+    if(!this.hass||!this.ctx().hass.states[id])return;
+    const config=this.live!;
+    const placed=config.plan.floors.some(f=>(f.furniture??[]).some(item=>item.entity===id)||placedDevices(this.ctx().hass,config,f).some(item=>item.id===id));
+    if(!placed){this.ctx().openEntity(id);return;}
+    this.go('home');this.panelOpen=false;await this.updateComplete;
+    window.dispatchEvent(new CustomEvent('sn-focus-entity',{detail:{entityId:id}}));
+  }
+  private async restoreLayout(config:ProConfig):Promise<void>{
+    if(!this.hass?.user?.is_admin||this.previewConfig||this.draft||this.connectionLost)throw new Error(this.hass?.language==='ar'?'احفظ أو ألغِ التعديلات واتصل بالبيت قبل الاسترجاع.':'Save or cancel edits and reconnect before restoring.');
+    const lifecycle=this.lifecycle;const owner=this.hass?.user?.id;
+    const work=this.layoutQueue.then(async()=>{
+      this.assertMutationAllowed(true);if(this.draft||lifecycle!==this.lifecycle||this.hass?.user?.id!==owner)throw new Error('Restore context changed; retry.');
+      const hass=this.hass!;await hass.callWS({type:'smartnest_pro/config/save',config,restore:true});
+      const response=await hass.callWS<{config:unknown}>({type:'smartnest_pro/config/get'});
+      if(this.isConnected&&this.hass===hass&&this.licenseValid===true&&!this.draft&&!this.previewConfig&&!this.connectionLost&&lifecycle===this.lifecycle){this.config=normalize(response.config);this.sheet=undefined;}
+    });
+    this.layoutQueue=work.catch(()=>{});return work;
+  }
   private async saveLayout(apply: (cfg: ProConfig) => void) {
     if (this.draft) {
       const next = clone(this.draft);
@@ -587,6 +643,7 @@ export class SmartNestProPanel extends LitElement {
       apply(next);
       const t = translator(resolveLang(next.settings.language, this.hass.language ?? "en"));
       try {
+        this.assertMutationAllowed(true);
         await this.hass.callWS({ type: "smartnest_pro/config/save", config: next });
         this.config = next;
         this.toast(t("saved"));
@@ -635,6 +692,7 @@ export class SmartNestProPanel extends LitElement {
   private async save(t: Ctx["t"]) {
     if (!this.draft) return;
     try {
+      this.assertMutationAllowed(true);
       await this.hass!.callWS({ type: "smartnest_pro/config/save", config: this.draft });
       this.config = this.draft;
       this.draft = undefined;
@@ -701,30 +759,31 @@ export class SmartNestProPanel extends LitElement {
   }
 
   private search(c: Ctx) {
-    const q = this.query.trim().toLowerCase();
+    const q = searchText(this.query);
     const results = q
       ? [
           ...areas(c.hass)
-            .filter((a) => a.name.toLowerCase().includes(q))
+            .filter((a) => searchText(a.name).includes(q))
             .map((a) => ({ key: a.area_id, label: a.name, icon: mdiDoorOpen, go: () => (c.selectRoom(a.area_id), (this.page = this.phone ? this.page : "rooms")) })),
           ...Object.keys(c.hass.states)
-            .filter((id) => nameOf(c.hass, id).toLowerCase().includes(q))
+            .filter((id) => searchMatches(c.hass,c.config,id,q))
             .slice(0, 8)
-            .map((id) => ({ key: id, label: nameOf(c.hass, id), icon: mdiMagnify, go: () => c.openEntity(id) })),
+            .map((id) => ({ key: id, label: nameOf(c.hass, id), icon: mdiMagnify, go: () => this.focusEntity(id) })),
         ].slice(0, 10)
       : [];
     return html`<div class="search">
       ${icon(mdiMagnify, 18)}
       <input
+        role="combobox" aria-label=${c.t("search")} aria-expanded=${!!results.length} aria-controls="sn-search-results" aria-activedescendant=${results.length?"sn-search-"+Math.min(this.searchIndex,results.length-1):nothing}
         .value=${this.query}
         placeholder=${c.t("search")}
-        @input=${(e: Event) => (this.query = (e.target as HTMLInputElement).value)}
-        @keydown=${(e: KeyboardEvent) => e.key === "Escape" && (this.query = "")}
+        @input=${(e: Event) => {this.query=(e.target as HTMLInputElement).value;this.searchIndex=0;}}
+        @keydown=${(e:KeyboardEvent)=>{if(e.key==='Escape'){this.query='';return;}if(!results.length)return;if(['ArrowDown','ArrowUp'].includes(e.key)){e.preventDefault();this.searchIndex=(this.searchIndex+(e.key==='ArrowDown'?1:-1)+results.length)%results.length;}if(e.key==='Enter'){e.preventDefault();results[Math.min(this.searchIndex,results.length-1)].go();this.query='';}}}
       />
       ${results.length
-        ? html`<div class="results glass">
+        ? html`<div class="results glass" id="sn-search-results" role="listbox">
             ${results.map(
-              (r) => html`<button
+              (r,index) => html`<button role="option" id=${"sn-search-"+index} aria-selected=${this.searchIndex===index} tabindex="-1"
                 @click=${() => {
                   this.query = "";
                   r.go();
@@ -773,7 +832,7 @@ export class SmartNestProPanel extends LitElement {
       { page: "media", icon: mdiPlayCircleOutline, label: c.t("media"), show: has("media_player") },
     ];
     const prefs = getPreferences(c.hass);
-    const list = items.filter(i => i.show && (!prefs.simple_mode || ['home', 'rooms', 'lights', 'climate'].includes(i.page)));
+    const list = items.filter(i => i.show && (!(prefs.simple_mode||c.childMode) || ['home', 'rooms', 'lights', 'climate'].includes(i.page)));
     if (prefs.page_order.length) list.sort((a, b) => {
       const rank = (page: string) => { const index = prefs.page_order.indexOf(page); return index < 0 ? 99 : index; };
       return rank(a.page) - rank(b.page);
@@ -896,6 +955,7 @@ export class SmartNestProPanel extends LitElement {
   }
 
   render() {
+    if(this.connectionLost&&!this.config)return html`<div class="center" role="status">${this.hass?.language==='ar'?'بانتظار رجوع الاتصال بـHome Assistant…':'Waiting for Home Assistant to reconnect…'}</div>`;
     if (this.licenseValid === false) {
       const ar = resolveLang("auto", this.hass?.language ?? "en") === "ar";
       return html`<div class="center" dir=${ar ? "rtl" : "ltr"} style="padding:24px;text-align:center;gap:16px;flex-direction:column">
@@ -908,15 +968,19 @@ export class SmartNestProPanel extends LitElement {
         <a href="/config/integrations/integration/smartnest_pro">${ar ? "إعدادات الإضافة" : "Integration settings"}</a>
       </div>`;
     }
+
     if (this.loadError) return html`<div class="center">${this.loadError}<button class="pill" @click=${() => this.load()}>↻</button></div>`;
     if (!this.hass || !this.live) return html`<div class="center"><div class="spinner"></div></div>`;
     const c = this.ctx();
     if (this.accessScope?.guest_expired) return html`<div class="center" dir=${c.rtl ? 'rtl' : 'ltr'}>${c.rtl ? 'انتهت صلاحية دخول الضيف. تواصل مع مسؤول البيت.' : 'Guest access has expired. Contact the home administrator.'}</div>`;
     const isNew = !c.config.experience?.setup_completed && !c.config.plan.floors.length && !c.config.settings.home_name;
-    if (c.isAdmin && (this.setupOpen || isNew)) return html`<sn-onboarding .ctx=${c} .cancel=${isNew ? undefined : () => { this.setupOpen = false; }} .complete=${async (next: ProConfig) => { await this.hass!.callWS({ type: 'smartnest_pro/config/save', config: next }); this.config = next; this.setupOpen = false; this.openCenter(this.ctx(), 'help'); }}></sn-onboarding>`;
+    if (c.isAdmin && (this.setupOpen || isNew)) return html`<sn-onboarding .ctx=${c} .cancel=${isNew ? undefined : () => { this.setupOpen = false; }} .complete=${async (next: ProConfig) => { this.assertMutationAllowed(true);await this.hass!.callWS({ type: 'smartnest_pro/config/save', config: next }); this.config = next; this.setupOpen = false; this.openCenter(this.ctx(), 'help'); }}></sn-onboarding>`;
     const prefs = getPreferences(c.hass);
     this.style.setProperty('--sn-user-scale', String(prefs.font_scale));
-    this.style.setProperty('zoom', String(prefs.font_scale));
+    this.style.setProperty('zoom', String(prefs.wall_display?Math.max(1.1,prefs.font_scale):prefs.font_scale));
+    this.style.setProperty('--sn-target-size',prefs.wall_display?'52px':'44px');
+    this.toggleAttribute('wall-display',!!prefs.wall_display);
+    this.toggleAttribute('night-dim',!!prefs.wall_display&&(new Date().getHours()>=22||new Date().getHours()<7));
     const contrast = prefs.high_contrast ? { '--sn-text': c.dark ? '#ffffff' : '#101810', '--sn-text-dim': c.dark ? '#eeeeee' : '#293329', '--sn-glass': c.dark ? '#111911' : '#ffffff', '--sn-glass-strong': c.dark ? '#111911' : '#ffffff', '--sn-glass-border': c.dark ? '#aabbaa' : '#354535' } : {};
     for (const name of ['--sn-text', '--sn-text-dim', '--sn-glass', '--sn-glass-strong', '--sn-glass-border']) { const value = (contrast as Record<string,string>)[name]; if (value) this.style.setProperty(name, value); else this.style.removeProperty(name); }
     this.toggleAttribute('high-contrast', prefs.high_contrast);
@@ -934,6 +998,8 @@ export class SmartNestProPanel extends LitElement {
 
     return html`
       <div class="bg"></div>
+      ${this.connectionLost?html`<div class="connection-status" role="status">${c.rtl?'الاتصال بـHome Assistant مقطوع. العرض محفوظ، والأوامر متوقفة حتى يرجع الاتصال.':'Home Assistant is disconnected. Cached display remains; commands are paused until reconnection.'}</div>`:nothing}
+      ${c.childMode?html`<span class="child-status">${c.rtl?'وضع الأطفال':'Child mode'}</span>`:nothing}
       ${this.phone
         ? html`<div class="shell-phone">
             <header class="top-phone">
@@ -973,7 +1039,7 @@ export class SmartNestProPanel extends LitElement {
             <main>${this.animated(page)}</main>
           </div>`}
       ${this.previewConfig ? html`<div role="status" style="position:fixed;top:12px;inset-inline:12px;z-index:101;background:#284c3b;color:#fff;padding:12px;border-radius:14px;display:flex;gap:12px;align-items:center;justify-content:center">${c.rtl ? 'معاينة خاصة — التصميم لم يُنشر بعد' : 'Private preview — changes have not been published'}<button class="pill" @click=${() => { this.draft = this.previewConfig; this.previewConfig = undefined; }}>${c.rtl ? 'رجوع للتعديل' : 'Back to editing'}</button><button class="pill" @click=${() => { this.previewConfig = undefined; this.sheet = undefined; }}>${c.rtl ? 'إغلاق المعاينة' : 'Close preview'}</button></div>` : nothing}
-      ${this.actionState ? html`<div class="action-status" role="status" style="position:fixed;bottom:78px;inset-inline:20px;z-index:100;display:flex;gap:12px;justify-content:center;align-items:center;background:var(--sn-panel,#fff);color:var(--sn-text);padding:12px;border-radius:14px;box-shadow:0 4px 25px #0002">${this.actionState}${this.failedAction ? html`<button class="pill" @click=${() => { void this.failedAction?.().catch(() => {}); }}>${c.rtl ? 'إعادة المحاولة' : 'Retry'}</button>` : nothing}</div>` : nothing}
+      ${this.actionState ? html`<div class="action-status" role="status" style="position:fixed;bottom:78px;inset-inline:20px;z-index:100;display:flex;gap:12px;justify-content:center;align-items:center;background:var(--sn-panel,#fff);color:var(--sn-text);padding:12px;border-radius:14px;box-shadow:0 4px 25px #0002">${this.actionState}<button class="pill" aria-label=${c.rtl?'إغلاق حالة التنفيذ':'Dismiss action status'} @click=${()=>{this.actionState='';this.failedAction=undefined;}}>×</button>${this.failedAction ? html`<button class="pill" @click=${() => { void this.failedAction?.().catch(() => {}); }}>${c.rtl ? 'إعادة المحاولة' : 'Retry'}</button>` : nothing}</div>` : nothing}
       <sn-sheet .spec=${this.sheet} .ctx=${c} ?phone=${this.phone} @close=${() => (this.sheet = this.sheet?.back)}></sn-sheet>
       ${this.toastMsg ? html`<div class="toast glass">${this.toastMsg}</div>` : nothing}
       ${this.saver ? html`<sn-screensaver .ctx=${c} @wake=${() => this.wake()}></sn-screensaver>` : nothing}
@@ -984,6 +1050,8 @@ export class SmartNestProPanel extends LitElement {
     tokens,
     shared,
     css`
+      :host([night-dim])::after{content:'';position:fixed;inset:0;pointer-events:none;background:#0003;z-index:2000}:host([wall-display]) .pill,:host([wall-display]) .round{min-height:52px;min-width:52px}
+      .connection-status{position:fixed;top:10px;inset-inline:12px;z-index:102;border-radius:12px;background:#6b4420;color:#fff;padding:12px 16px;font-size:13px;text-align:center}.child-status{position:fixed;bottom:14px;inset-inline-start:15px;z-index:50;border-radius:99px;background:#284c3b;color:#fff;padding:7px 12px;font-size:11px}.results [aria-selected=true]{outline:2px solid var(--sn-accent,#bfd99c);outline-offset:-2px}
       :host {
         display: block;
         position: relative;

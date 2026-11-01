@@ -14,6 +14,9 @@ import time
 from typing import Any
 from uuid import uuid4
 
+from .action_feedback import expectation, confirm
+from .validation import validate_config
+
 _LOGGER = logging.getLogger(__name__)
 STATE_DOMAINS = {"light", "switch", "climate", "cover", "lock", "fan", "vacuum", "media_player", "input_boolean", "alarm_control_panel"}
 
@@ -73,6 +76,8 @@ def validate_access(config: dict) -> bool:
         for key in ("areas", "entities"):
             if key in policy and (not isinstance(policy[key], list) or len(policy[key]) > 1000 or any(not isinstance(item, str) for item in policy[key])):
                 return False
+        if "child_mode" in policy and type(policy["child_mode"]) is not bool:
+            return False
         if "guest_until" in policy and (type(policy["guest_until"]) not in (float, int) or not 0 < policy["guest_until"] < 1e12):
             return False
     return True
@@ -98,6 +103,8 @@ def entity_allowed(hass: Any, config: dict | None, user: Any, entity_id: str, co
     if policy is None:
         return True
     if policy.get("expired"):
+        return False
+    if control and policy.get("child_mode") and entity_id.split(".", 1)[0] in {"lock", "alarm_control_panel", "scene", "script", "button", "input_button", "remote"}:
         return False
     if entity_id in policy.get("entities", []):
         return True
@@ -171,10 +178,12 @@ class Platform:
         self.lock = asyncio.Lock()
         self._state_cancel = None
         self._state_active = False
+        self.integration_version: str | None = None
 
     async def async_load(self) -> None:
         data = await self.store.async_load() or {}
         self.history = data.get("history", [])[-10:]
+        self.integration_version = data.get("integration_version") if isinstance(data.get("integration_version"), str) else None
         self.events = data.get("events", [])[-200:]
         self.preferences = data.get("preferences", {}) if isinstance(data.get("preferences", {}), dict) else {}
         now = time.time()
@@ -185,7 +194,7 @@ class Platform:
         await self._persist()
 
     async def _persist(self) -> None:
-        await self.store.async_save({"history": self.history[-10:], "events": self.events[-200:], "schedules": self.schedules, "preferences": self.preferences})
+        await self.store.async_save({"history": self.history[-10:], "events": self.events[-200:], "schedules": self.schedules, "preferences": self.preferences, "integration_version": self.integration_version})
 
     def get_preferences(self, user: Any) -> dict:
         from .const import DOMAIN
@@ -228,23 +237,49 @@ class Platform:
             self.preferences[user.id] = {**current, **copy.deepcopy(changes)}
             await self._persist()
 
-    async def async_save_config(self, config: dict) -> None:
+    async def snapshot_version(self, version: str) -> None:
+        """Retain the last loaded layout before a newly installed build can edit it."""
         from .const import DOMAIN
+        async with self.lock:
+            previous = self.integration_version
+            config = self.hass.data.get(DOMAIN, {}).get("config")
+            if previous != version and config is not None:
+                self.history.append({"id": str(uuid4()), "created_at": time.time(), "config": copy.deepcopy(config), "reason": "before_update", "version": previous or "legacy"})
+                self.history = self.history[-10:]
+            self.integration_version = version
+            await self._persist()
+
+    async def async_save_config(self, config: dict, *, restore: bool = False) -> None:
+        from .const import DOMAIN
+        validate_config(config)
+        if not validate_access(config):
+            raise ValueError("Access settings are malformed")
         async with self.lock:
             data = self.hass.data[DOMAIN]
             old = data.get("config")
+            if restore:
+                config = copy.deepcopy(config)
+                config.pop("access", None)
+                config["settings"].pop("kiosk_pin", None)
+                if old is not None:
+                    if "access" in old:
+                        config["access"] = copy.deepcopy(old["access"])
+                    if "kiosk_pin" in old.get("settings", {}):
+                        config["settings"]["kiosk_pin"] = old["settings"]["kiosk_pin"]
             if old is not None and old != config:
-                self.history.append({"id": str(uuid4()), "created_at": time.time(), "config": copy.deepcopy(old)})
+                self.history.append({"id": str(uuid4()), "created_at": time.time(), "config": copy.deepcopy(old), "reason": "before_restore" if restore else "before_save"})
                 self.history = self.history[-10:]
                 await self._persist()
             await data["store"].async_save(config)
             data["config"] = config
 
-    async def audit(self, user: str, domain: str, service: str, entities: list[str], success: bool, *, from_state: str | None = None, to_state: str | None = None, state_event: bool = False) -> None:
+    async def audit(self, user: str, domain: str, service: str, entities: list[str], success: bool, *, from_state: str | None = None, to_state: str | None = None, state_event: bool = False, confirmation: dict | None = None) -> None:
         async with self.lock:
             if state_event and not self._state_active:
                 return
             record = {"at": time.time(), "user": user, "domain": domain, "service": service, "entities": entities, "success": success}
+            if confirmation is not None:
+                record.update({key: copy.deepcopy(confirmation[key]) for key in ("confirmation", "confirmed_entities", "unconfirmed_entities")})
             if from_state is not None and to_state is not None:
                 record.update(from_state=from_state[:80], to_state=to_state[:80])
             self.events.append(record)
@@ -281,7 +316,7 @@ class Platform:
         except Exception:
             _LOGGER.warning("SmartNest state activity could not be saved")
 
-    async def action(self, user: Any, domain: str, service: str, data: dict) -> None:
+    async def action(self, user: Any, domain: str, service: str, data: dict) -> dict:
         from homeassistant.core import Context
         from .const import DOMAIN
         state = self.hass.data.get(DOMAIN, {})
@@ -289,6 +324,7 @@ class Platform:
         if not manager or not manager.valid:
             raise ActionDenied("Activate SmartNest to control devices")
         entities = action_targets(self.hass, state.get("config"), user, domain, service, data)
+        predicates = {eid: predicate for eid in entities if (predicate := expectation(eid, service, data, self.hass.states.get(eid))) is not None}
         try:
             await self.hass.services.async_call(domain, service, data, blocking=True, context=Context(user_id=user.id))
         except Exception:
@@ -297,12 +333,17 @@ class Platform:
             except Exception:
                 _LOGGER.warning("SmartNest action audit could not be saved")
             raise
+        result = await confirm(self.hass, predicates)
+        # A mixed batch has only partial observability: do not claim every target was confirmed.
+        if result["confirmation"] == "confirmed" and len(predicates) != len(entities):
+            result["confirmation"] = "accepted"
         try:
-            await self.audit(user.id, domain, service, entities, True)
+            await self.audit(user.id, domain, service, entities, result["confirmation"] != "unconfirmed", confirmation=result)
         except Exception:
             # The device already received its command. Do not report failure and
             # encourage a duplicate command only because local audit storage failed.
             _LOGGER.warning("SmartNest action audit could not be saved")
+        return result
 
     async def add_schedule(self, user: Any, entity_id: str, at: str) -> dict:
         from .const import DOMAIN

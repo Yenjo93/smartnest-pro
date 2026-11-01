@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { getPreferences, savePreferences, planTemplate, scopedHass, lightweight, isPreviewMutation } from '../src/experience.ts';
+import { getPreferences, savePreferences, planTemplate, scopedHass, lightweight, isPreviewMutation, searchText, searchMatches, setupSuggestions, favoriteIds, actionNeedsConfirmation } from '../src/experience.ts';
 const memory = new Map();
 globalThis.localStorage = { getItem: key => memory.get(key) ?? null, setItem: (key, value) => memory.set(key, value) };
 globalThis.window = { dispatchEvent() {} };
@@ -42,4 +42,28 @@ test('performance explicit modes override hardware and auto honors limited devic
 test('private preview blocks all control, timer and configuration mutation routes', () => {
  for(const type of ['call_service','smartnest_pro/action','smartnest_pro/timer/set','smartnest_pro/timer/cancel','smartnest_pro/schedule/add','smartnest_pro/schedule/cancel','smartnest_pro/config/save','smartnest_pro/preferences/save']) assert.equal(isPreviewMutation(type),true,type);
  for(const type of ['smartnest_pro/config/get','smartnest_pro/config/history','smartnest_pro/license/status','smartnest_pro/timer/list','camera/web_rtc_offer']) assert.equal(isPreviewMutation(type),false,type);
+});
+
+test('setup discovery uses actual areas and visible sensor classes without operating devices',()=>{
+ const h=hass('discovery');h.entities={'light.a':{area_id:'a'},'sensor.t':{area_id:'a'},'sensor.energy':{area_id:'a'}};
+ h.states={'light.a':{entity_id:'light.a',attributes:{friendly_name:'Lamp'}},'sensor.t':{entity_id:'sensor.t',attributes:{device_class:'temperature'}},'sensor.energy':{entity_id:'sensor.energy',attributes:{device_class:'energy',state_class:'total_increasing',unit_of_measurement:'kWh'}}};
+ const suggested=setupSuggestions(h);assert.deepEqual(suggested.home.devices,['light.a']);assert.equal(suggested.home.energy,'sensor.energy');assert.equal(suggested.rooms.a.temperature,'sensor.t');
+ const auto=planTemplate('auto',h,'ar');assert.equal(auto.floors[0].rooms.length,2);assert.equal(planTemplate('studio',h,'ar').floors[0].rooms.length,1);
+});
+test('search handles Arabic marks, entity IDs and explicit bilingual aliases',()=>{
+ const h=hass('search');h.states={'light.a':{attributes:{friendly_name:'Living Lamp'}}};const c={names:{},aliases:{'light.a':['ضَوْء الصّالة']}};
+ assert.equal(searchText('إِضَاءَة'),'اضاءه');assert.ok(searchMatches(h,c,'light.a','ضوء الصالة'));assert.ok(searchMatches(h,c,'light.a','living lamp'));assert.ok(!searchMatches(h,c,'light.a','bedroom'));
+ assert.doesNotThrow(()=>searchMatches(h,{aliases:{'light.a':123}},'light.a','Lamp'));
+});
+test('screen favorites and wall display remain local while account favorites sync',()=>{
+ memory.clear();const h=hass('screen');const sent=[];h.callWS=async message=>{sent.push(message);};
+ savePreferences(h,{favorites:['light.a']});savePreferences(h,{screen_favorites:[],wall_display:true});
+ assert.deepEqual(favoriteIds(getPreferences(h)),[]);assert.equal(sent[1].preferences.screen_favorites,undefined);assert.equal(sent[1].preferences.wall_display,undefined);
+ savePreferences(h,{screen_favorites:undefined},false);assert.deepEqual(favoriteIds(getPreferences(h)),['light.a']);
+});
+test('critical-device confirmation covers explicit off values and security services',()=>{
+ const critical=['light.a','climate.a','fan.a'];
+ for(const [domain,service,data] of [['light','turn_off',{entity_id:'light.a'}],['light','turn_on',{entity_id:'light.a',brightness:0}],['climate','set_hvac_mode',{entity_id:'climate.a',hvac_mode:'off'}],['fan','set_percentage',{entity_id:'fan.a',percentage:0}],['lock','unlock',{entity_id:'lock.a'}]])assert.equal(actionNeedsConfirmation(domain,service,data,critical),true);
+ assert.equal(actionNeedsConfirmation('light','turn_on',{entity_id:'light.a',brightness:100},critical),false);
+ assert.equal(actionNeedsConfirmation('light','turn_off',{entity_id:'light.b'},critical),false);
 });

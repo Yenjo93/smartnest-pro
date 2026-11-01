@@ -223,6 +223,10 @@ let demoPreferences: Record<string, unknown> = {};
 let saved: unknown = params.has("empty") ? null : demoConfig;
 const configSubs = new Set<(m: any) => void>();
 let notify: () => void = () => {};
+let mockOnline=true;
+const mockConnectionEvents=new Map<string,Set<(...args:any[])=>void>>();
+export function setMockConnection(connected:boolean){mockOnline=connected;for(const listener of mockConnectionEvents.get(connected?'ready':'disconnected')??[])listener();notify();}
+
 
 function set(id: string, state: string, attrs: Record<string, any> = {}) {
   const s = states[id];
@@ -341,9 +345,11 @@ function statistics() {
 }
 
 async function callWS(msg: Record<string, any>): Promise<any> {
+  if(!mockOnline)throw new Error('Mock connection is offline');
   switch (msg.type) {
+    case "config/auth/list":return [{id:'u1',name:'Demo admin',is_active:true}];
     case "smartnest_pro/access/get":
-      return { restricted: params.has('guest'), areas: params.has('guest') ? ['main_hall'] : [], entities: [], guest_expired: params.has('expired_guest') };
+      return { restricted: params.has('guest'), areas: params.has('guest') ? ['main_hall'] : [], entities: [], guest_expired: params.has('expired_guest'),child_mode:params.has('child') };
     case "smartnest_pro/preferences/get": return { preferences: demoPreferences };
     case "smartnest_pro/preferences/save": demoPreferences = { ...demoPreferences, ...msg.preferences }; return { success: true };
     case "smartnest_pro/config/history": return { versions: demoVersions };
@@ -355,7 +361,7 @@ async function callWS(msg: Record<string, any>): Promise<any> {
       if (params.has('fail_action')) throw new Error('Device did not respond');
       await callService(msg.domain, msg.service, msg.data);
       demoActivity.unshift({ at: Date.now() / 1000, user: 'u1', domain: msg.domain, service: msg.service, entities: [msg.data.entity_id], success: true });
-      return { success: true };
+      return {success:true,confirmation:params.has('unconfirmed_action')?'unconfirmed':['scene','script','button','input_button'].includes(msg.domain)?'accepted':'confirmed',confirmed_entities:params.has('unconfirmed_action')?[]:[].concat(msg.data.entity_id??[]),unconfirmed_entities:params.has('unconfirmed_action')?[].concat(msg.data.entity_id??[]):[]};
     case "smartnest_pro/license/status":
       return { expires_at: Date.now() / 1000 + 86400 * 24, offline_until: Date.now() / 1000 + 86400 * 3, customer_name: 'Demo home', valid: !params.has("unlicensed"), reason: params.has("unlicensed") ? "invalid" : "active" };
     case "smartnest_pro/timer/list":
@@ -367,6 +373,7 @@ async function callWS(msg: Record<string, any>): Promise<any> {
       return { config: saved };
     case "smartnest_pro/config/save":
       if (saved) demoVersions.unshift({ id: crypto.randomUUID(), created_at: Date.now() / 1000, config: JSON.parse(JSON.stringify(saved)) });
+      if(msg.restore&&saved){const previous=saved as ProConfig;msg.config={...msg.config,access:previous.access,settings:{...msg.config.settings,kiosk_pin:previous.settings.kiosk_pin}};}
       saved = msg.config;
       configSubs.forEach((cb) => cb({ config: saved }));
       return null;
@@ -384,6 +391,16 @@ async function callWS(msg: Record<string, any>): Promise<any> {
 }
 
 export function makeHass(onChange: (h: Hass) => void, role: "admin" | "user" = "admin"): Hass {
+  const connection:Hass['connection']={
+    get connected(){return mockOnline;},
+    addEventListener:(event,listener)=>{const listeners=mockConnectionEvents.get(event)??new Set();listeners.add(listener);mockConnectionEvents.set(event,listeners);},
+    removeEventListener:(event,listener)=>{mockConnectionEvents.get(event)?.delete(listener);},
+    subscribeMessage:async(cb,msg)=>{
+      if(msg.type==='smartnest_pro/license/subscribe'){cb({valid:!params.has('unlicensed'),reason:params.has('unlicensed')?'invalid':'active'} as any);return()=>{};}
+      if(msg.type==='smartnest_pro/config/subscribe')configSubs.add(cb);return()=>{configSubs.delete(cb);};
+    }
+  };
+
   const build = (): Hass => ({
     states: { ...states },
     areas: areasList,
@@ -398,16 +415,7 @@ export function makeHass(onChange: (h: Hass) => void, role: "admin" | "user" = "
       const file = (init?.body as FormData).get("file") as File;
       return new Response(JSON.stringify({ url: URL.createObjectURL(file) }), { status: 200 });
     },
-    connection: {
-      subscribeMessage: async (cb, msg) => {
-        if (msg.type === "smartnest_pro/license/subscribe") {
-          cb({ valid: !params.has("unlicensed"), reason: params.has("unlicensed") ? "invalid" : "active" } as any);
-          return () => {};
-        }
-        if (msg.type === "smartnest_pro/config/subscribe") configSubs.add(cb);
-        return () => configSubs.delete(cb);
-      },
-    },
+    connection,
   });
   notify = () => onChange(build());
   return build();

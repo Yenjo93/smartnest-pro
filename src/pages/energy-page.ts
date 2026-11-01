@@ -9,6 +9,7 @@ import { pageHead, pageStyles } from "./page";
 import { hiddenButton, hideable, shown } from "./hide";
 import "../cards/energy-card";
 import { energySettings } from "../settings";
+import { deviceEnergyIds, entityArea, recordedCost, nightBaseline, tariffAt, statTime, type HourStat } from "../energy-upgrade";
 
 type Stat = { start: number | string; change?: number | null };
 const dayKey = (d: Date) => `${d.getFullYear()}-${d.getMonth()}-${d.getDate()}`;
@@ -28,7 +29,7 @@ async function loadDays(ctx: Ctx, ids: string[], from: Date): Promise<Record<str
   for (const id of ids) {
     const m = new Map<string, number>();
     for (const row of res[id] ?? []) {
-      const t = typeof row.start === "number" ? row.start : Date.parse(row.start);
+      const t = statTime(row.start);
       if (!Number.isFinite(t) || typeof row.change !== "number" || !Number.isFinite(row.change)) continue;
       const k = dayKey(new Date(t));
       m.set(k, (m.get(k) ?? 0) + row.change);
@@ -47,6 +48,8 @@ export class SnEnergyPage extends LitElement {
   private timer?: number;
   @state() private loading = false;
   @state() private statisticsError = false;
+  @state() private hours?: Record<string, HourStat[]>;
+  @state() private hourlyError = false;
 
   connectedCallback() {
     super.connectedCallback();
@@ -63,21 +66,28 @@ export class SnEnergyPage extends LitElement {
 
   private async refresh(force: boolean) {
     const { energy, solar_energy } = this.ctx.config.home;
-    const ids = [...new Set([energy, solar_energy].filter(Boolean) as string[])];
+    const meters = deviceEnergyIds(this.ctx.hass, [energy, solar_energy].filter(Boolean) as string[]);
+    const ids = [...new Set([energy, solar_energy, ...meters].filter(Boolean) as string[])];
     const key = ids.join() + dayKey(new Date());
-    if (!ids.length) { this.days = undefined; this.loadedFor = undefined; return; }
+    if (!ids.length) { this.days = undefined; this.hours = undefined; this.loadedFor = undefined; return; }
     if (!force && key === this.loadedFor) return;
     this.loadedFor = key;
     const request = ++this.requestVersion;
     this.loading = true;
-    this.statisticsError = false;
+    this.statisticsError = false; this.hourlyError = false;
     const now = new Date();
     const from = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     try {
       const days = await loadDays(this.ctx, ids, from);
       if (request === this.requestVersion && this.isConnected) this.days = days;
+      const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const sevenDays = new Date(now); sevenDays.setDate(now.getDate() - 7); sevenDays.setHours(0, 0, 0, 0);
+      try {
+        const hours = await this.ctx.hass.callWS<Record<string, HourStat[]>>({ type: 'recorder/statistics_during_period', start_time: new Date(Math.min(monthStart.getTime(), sevenDays.getTime())).toISOString(), end_time: now.toISOString(), statistic_ids: [...new Set([energy, ...meters].filter(Boolean) as string[])], period: 'hour', types: ['change'], units: { energy: 'kWh' } });
+        if (request === this.requestVersion && this.isConnected) this.hours = hours;
+      } catch { if (request === this.requestVersion && this.isConnected) { this.hours = undefined; this.hourlyError = true; } }
     } catch {
-      if (request === this.requestVersion && this.isConnected) { this.days = undefined; this.statisticsError = true; }
+      if (request === this.requestVersion && this.isConnected) { this.days = undefined; this.hours = undefined; this.statisticsError = true; }
     } finally {
       if (request === this.requestVersion && this.isConnected) this.loading = false;
     }
@@ -115,7 +125,15 @@ export class SnEnergyPage extends LitElement {
     const monitoredPower = (experience as typeof experience & { power_entity?: string }).power_entity;
     const livePower = monitoredPower ? powerKw(hass.states[monitoredPower]) : undefined;
     const budget = typeof experience.monthly_budget === "number" && experience.monthly_budget > 0 ? experience.monthly_budget : undefined;
-    const cost = month !== undefined && tariff !== undefined ? month * tariff : undefined;
+    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1).getTime();
+    const inMonth = (rows: HourStat[]) => rows.filter(row => statTime(row.start) >= monthStart);
+    const hourlyHome = energy && this.hours?.[energy] ? recordedCost(inMonth(this.hours[energy]), tariff, experience.tariff_schedule) : undefined;
+    const rateNow = tariffAt(today, tariff, experience.tariff_schedule);
+    const cost = experience.tariff_schedule?.length ? hourlyHome?.cost : hourlyHome?.cost ?? (month !== undefined && tariff !== undefined ? month * tariff : undefined);
+    const night = nightBaseline(energy ? this.hours?.[energy] ?? [] : [], today);
+    const deviceCosts = deviceEnergyIds(hass, [energy, solar_energy].filter(Boolean) as string[]).map(id => ({ id, area: entityArea(hass, id), ...recordedCost(inMonth(this.hours?.[id] ?? []), tariff, experience.tariff_schedule) })).filter(row => row.energy !== undefined).sort((a, b) => (b.cost ?? b.energy ?? 0) - (a.cost ?? a.energy ?? 0));
+    const roomCosts = new Map<string, { energy: number; cost?: number; devices: number }>();
+    for (const row of deviceCosts) { const key = row.area || ''; const previous = roomCosts.get(key); roomCosts.set(key, { energy: (previous?.energy ?? 0) + row.energy!, cost: row.cost !== undefined && (!previous || previous.cost !== undefined) ? (previous?.cost ?? 0) + row.cost : undefined, devices: (previous?.devices ?? 0) + 1 }); }
     const budgetPercent = cost !== undefined && budget ? cost / budget * 100 : undefined;
     const alertThreshold = typeof experience.power_alert_kw === "number" && experience.power_alert_kw > 0 ? experience.power_alert_kw : undefined;
     const powerAlert = livePower !== undefined && alertThreshold !== undefined && livePower > alertThreshold;
@@ -143,7 +161,7 @@ export class SnEnergyPage extends LitElement {
         <div class="glass stat"><span>${t("yesterday")}</span><b>${fmt(val(grid, day(1)))}<small>kWh</small></b></div>
         <div class="glass stat"><span>${t("this_month")}</span><b>${fmt(month)}<small>kWh</small></b></div>
         <div class="glass stat"><span>${this.text("القدرة الآن", "Power now")}</span><b>${fmt(livePower)}<small>kW</small></b>${!monitoredPower ? html`<small>${this.text("اختار حساس القدرة من الإعدادات", "Choose a power sensor in settings")}</small>` : livePower === undefined ? html`<small>${this.text("حساس القدرة غير متاح", "Power sensor unavailable")}</small>` : nothing}</div>
-        <div class="glass stat"><span>${this.text("تكلفة تقديرية حسب الاستهلاك الحالي", "Estimated cost at the current rate")}</span><b>${livePower !== undefined && tariff !== undefined ? (Math.max(0, livePower) * tariff).toFixed(2) : "–"}<small>${currency}/${this.text("ساعة", "hour")}</small></b>${tariff === undefined ? html`<small>${this.text("أدخل تعرفة kWh في الإعدادات", "Set your kWh tariff in settings")}</small>` : nothing}</div>
+        <div class="glass stat"><span>${this.text("تكلفة تقديرية حسب الاستهلاك الحالي", "Estimated cost at the current rate")}</span><b>${livePower !== undefined && rateNow !== undefined ? (Math.max(0, livePower) * rateNow).toFixed(2) : "–"}<small>${currency}/${this.text("ساعة", "hour")}</small></b>${rateNow === undefined ? html`<small>${this.text("أدخل تعرفة kWh في الإعدادات", "Set your kWh tariff in settings")}</small>` : nothing}</div>
         <div class="glass stat"><span>${this.text("تكلفة الاستهلاك المسجل هذا الشهر", "Recorded month-to-date cost")}</span><b>${cost === undefined ? "–" : cost.toFixed(2)}<small>${currency}</small></b>${!completeMonth && month !== undefined ? html`<small>${this.text("بعض الأيام بدون بيانات؛ الإجمالي غير مكتمل", "Some days have no data; this total is incomplete")}</small>` : nothing}</div>
         ${solar_energy ? html`<div class="glass stat sun"><span>${t("solar_today")}</span><b>${fmt(val(solar, today))}<small>kWh</small></b></div>` : nothing}
       </div>
@@ -152,6 +170,9 @@ export class SnEnergyPage extends LitElement {
         <div class="glass card"><h3>${this.text("ميزانية الطاقة الشهرية", "Monthly energy budget")}</h3>${budgetPercent === undefined ? html`<p>${this.text("حدد التعرفة والميزانية وعدّاد الطاقة من الإعدادات لعرض التقدم.", "Set your tariff, budget and energy meter in settings to track progress.")}</p>` : html`<div class="budget-head"><b>${cost!.toFixed(2)} / ${budget!.toFixed(2)} ${currency}</b><span>${budgetPercent.toFixed(0)}%</span></div><progress max="100" .value=${Math.min(100, Math.max(0, budgetPercent))} aria-label=${this.text("نسبة استهلاك الميزانية", "Budget used")}></progress><p>${!completeMonth ? this.text("التقدم مبني على الأيام المتاحة فقط.", "Progress is based only on days with data.") : budgetPercent > 100 ? this.text("تجاوزت الميزانية المحددة.", "Your configured budget has been exceeded.") : this.text("تقدير حسب التعرفة المدخلة؛ لا يشمل الرسوم والضرائب.", "Estimate from your entered tariff; excludes fixed fees and taxes.")}</p>`}</div>
       </div>
       ${this.ctx.isAdmin ? html`<button class="pill configure" @click=${() => energySettings(this.ctx)}>${icon(mdiCog, 16)}${this.text("إعدادات الطاقة والتكلفة", "Energy and cost settings")}</button>` : nothing}
+      ${budgetPercent !== undefined && budgetPercent > 100 ? html`<div class="glass energy-alert" role="alert">${this.text('تجاوزت تكلفة الاستهلاك المسجل الميزانية.', 'Recorded consumption cost exceeds your budget.')} <a href="#recorded-device-costs">${this.text('راجع الأجهزة والغرف الأعلى استهلاكًا', 'Review device and room consumers')}</a></div>` : nothing}
+      <div class="glass card" id="recorded-device-costs"><h3>${this.text('تكلفة الأجهزة والغرف المسجلة', 'Recorded device and room costs')}</h3><p class="status-note">${this.text('تقدير للقراءات المتاحة فقط، حتى ٤٠ عداد جهاز مسجّل. لا نجمع حساسات متعددة لنفس الجهاز، ولا تمثل هذه القائمة مجموع عداد البيت. حدود التسجيل والأجهزة غير المزودة بعدادات تجعل البيانات جزئية.', 'Estimate for available readings only, up to 40 registered device meters. Multiple meters on one device are not added together. This list is not the whole-home total; recorder gaps and devices without meters make it partial.')}</p>${deviceCosts.length ? html`<div class="cost-grid"><div><h4>${this.text('حسب الجهاز', 'By device')}</h4>${deviceCosts.map(row => html`<div class="cost-row"><button class="pill" @click=${() => this.ctx.openEntity(row.id)}>${nameOf(hass, row.id)}</button><span>${row.energy!.toFixed(2)} kWh · ${row.cost === undefined ? '–' : row.cost.toFixed(2)} ${currency}</span></div>`)}</div><div><h4>${this.text('حسب الغرفة', 'By room')}</h4>${[...roomCosts].map(([id, row]) => html`<div class="cost-row"><span>${id ? config.rooms[id]?.name || hass.areas?.[id]?.name || id : this.text('بدون غرفة', 'No area')} · ${row.devices}</span><span>${row.energy.toFixed(2)} kWh · ${row.cost === undefined ? '–' : row.cost.toFixed(2)} ${currency}</span></div>`)}</div></div>` : html`<p>${this.text('لا توجد إحصائيات ساعة مسجلة لعدادات أجهزة مرتبطة. أضف عدادات طاقة للأجهزة وفعّل Recorder؛ لا نستنتج استهلاك الشهر من القدرة الحالية.', 'No hourly statistics for registered device meters. Add device energy meters and enable Recorder; monthly consumption is never inferred from current power.')}</p>`}</div>
+      <div class="glass card"><h3>${this.text('الاستهلاك الأساسي ليلًا', 'Overnight baseline')}</h3>${night.averageKw === undefined ? html`<p>${this.text('نحتاج ليلة كاملة مسجلة بين 00:00 و06:00. ما زالت البيانات غير كافية.', 'A complete recorded 00:00–06:00 night is required; there is not enough data yet.')}</p>` : html`<b class="comparison">${(night.averageKw * 1000).toFixed(0)} W</b><p>${this.text(`متوسط القدرة خلال ${night.nights} ليالٍ مكتملة حسب توقيت الشاشة. هذا خط أساس تقديري وليس إثبات هدر أو استهلاك جهاز محدد.`, `Average demand over ${night.nights} complete nights in this screen’s time zone. This is an estimated baseline, not proof of waste or a specific device’s usage.`)}</p>`}${this.hourlyError ? html`<p class="status-note">${this.text('تعذّر تحميل إحصائيات الساعة. جرّب إعادة التحميل وتحقق من Recorder.', 'Hourly statistics could not be loaded. Retry and check Recorder.')}</p>` : nothing}</div>
       <div class="cols">
         <sn-energy-card .ctx=${this.ctx}></sn-energy-card>
         <div class="glass card week">
@@ -195,6 +216,7 @@ export class SnEnergyPage extends LitElement {
     shared,
     pageStyles,
     css`
+      .cost-grid{display:grid;grid-template-columns:1fr 1fr;gap:24px}.cost-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:12px 0;border-bottom:1px solid var(--sn-glass-border);font-size:12px}.cost-row span{overflow-wrap:anywhere}.cost-row .pill{max-width:65%;white-space:normal}#recorded-device-costs{margin-bottom:16px}h4{font-size:14px;font-weight:500}@media(max-width:650px){.cost-grid{grid-template-columns:1fr}}
       .energy-insights { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 14px; margin-bottom: 16px; }
       .energy-insights p, .status-note { color: var(--sn-text-dim); font-size: 12px; line-height: 1.8; }
       .energy-note, .energy-alert { padding: 16px; margin-bottom: 14px; font-size: 13px; line-height: 1.8; }

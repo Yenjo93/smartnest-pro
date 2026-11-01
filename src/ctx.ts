@@ -32,6 +32,9 @@ export interface Ctx {
   palette: Palette;
   phone: boolean;
   isAdmin: boolean;
+  childMode?: boolean;
+  /** Focus the entity on the plan without executing a device command. */
+  focusEntity?(entityId: string): void;
   editing: boolean;
   /** Kiosk mode on this screen: Home Assistant's sidebar hidden, editing behind the PIN. */
   kiosk: boolean;
@@ -53,4 +56,6 @@ export interface Ctx {
   rename(entityId: string, name: string | undefined): void;
   /** Changes the layout and saves it straight away (or into the draft in edit mode). For small settings like these. */
   saveLayout(fn: (cfg: ProConfig) => void): void;
+  restoreLayout?(config: ProConfig): Promise<void>;
+  previewLayout?(config: ProConfig): void;
 }
