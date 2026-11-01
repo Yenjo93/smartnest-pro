@@ -51,7 +51,7 @@ export async function sessionValid(request, env) {
 
 /** Calendar months from issuance, preserving UTC time and clamping month ends. */
 export function planExpiry(plan, issuedAt) {
-  const months = { '3_months': 3, '6_months': 6, '1_year': 12 };
+  const months = { 'trial_month': 1, '3_months': 3, '6_months': 6, '1_year': 12 };
   if (plan === 'lifetime') return null;
   if (!Object.hasOwn(months, plan)) throw new RangeError('Unknown plan');
   const date = new Date(issuedAt * 1000);

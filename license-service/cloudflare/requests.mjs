@@ -2,7 +2,7 @@
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 const STATUSES = ['new', 'in_progress', 'closed'];
 const TYPES = ['license', 'renewal', 'support', 'patreon'];
-const PLANS = ['3_months', '6_months', '1_year', 'lifetime'];
+const PLANS = ['trial_month', '1_year'];
 const encoder = new TextEncoder();
 class RequestError extends Error { constructor(status = 400) { super('Invalid request'); this.status = status; } }
 function reply(status, data) {
@@ -42,6 +42,7 @@ function normalized(data) {
   keys(data, ['submission_id', 'type', 'plan', 'name', 'contact_method', 'contact', 'license_reference', 'message', 'consent', 'website'], ['submission_id', 'type', 'plan', 'name', 'contact_method', 'contact', 'message', 'consent']);
   if (typeof data.submission_id !== 'string' || !UUID.test(data.submission_id) || !TYPES.includes(data.type) || data.consent !== true || (Object.hasOwn(data, 'website') && data.website !== '')) throw new RequestError();
   if (['license', 'renewal'].includes(data.type) ? !PLANS.includes(data.plan) : data.plan !== '') throw new RequestError();
+  if (data.type === 'renewal' && data.plan !== '1_year') throw new RequestError();
   const name = text(data.name, 100, true), contact = text(data.contact, 120, true);
   if (!['email', 'whatsapp'].includes(data.contact_method)) throw new RequestError();
   if (data.contact_method === 'email' && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contact)) throw new RequestError();

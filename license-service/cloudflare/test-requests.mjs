@@ -19,7 +19,7 @@ function fixture(t) {
   }
   return { db, env, call };
 }
-const input = patch => ({ submission_id: crypto.randomUUID(), type: 'license', plan: '3_months', name: '  بيت أحمد  ', contact_method: 'email', contact: 'ahmad@example.com', license_reference: '', message: '', consent: true, website: '', ...patch });
+const input = patch => ({ submission_id: crypto.randomUUID(), type: 'license', plan: '1_year', name: '  بيت أحمد  ', contact_method: 'email', contact: 'ahmad@example.com', license_reference: '', message: '', consent: true, website: '', ...patch });
 
 test('public intake acknowledges only reference and stores trimmed private details for owner', async t => {
  const { call } = fixture(t); const request = input(); const response = await call('/v1/public/requests', request);
