@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test test-worker.mjs",
+    "test": "node --test test-*.mjs",
     "check": "cf deploy --dry-run",
     "deploy": "cf deploy"
   },
