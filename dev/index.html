@@ -23,6 +23,7 @@
       import "../src/main.ts";
       import { makeHass } from "./mock.ts";
 
+      if (new URLSearchParams(location.search).has("showcase")) document.querySelector("#dev")?.remove();
       const panel = document.querySelector("smartnest-pro-panel");
       panel.panel = { config: { asset_base: "/custom_components/smartnest_pro/frontend/static/" } };
       const role = new URLSearchParams(location.search).has("user") ? "user" : "admin";

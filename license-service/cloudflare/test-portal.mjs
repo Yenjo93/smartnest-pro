@@ -72,3 +72,14 @@ test('payment guide is prominent and creator URL never implies annual billing is
   assert.equal((html.match(/id="patreon-live"/g)||[]).length,1);
  }
 });
+
+test('showcase images are served through the asset binding for GET and HEAD only',async t=>{
+ const {env}=fixture(t);const requests=[];
+ env.ASSETS={async fetch(request){requests.push(request.method);return new Response(request.method==='HEAD'?null:'image',{headers:{'Content-Type':'image/jpeg'}});}};
+ for(const method of ['GET','HEAD']){
+  const response=await worker.fetch(new Request(ORIGIN+'/showcase/dashboard-floorplan-ar.jpg',{method}),env);
+  assert.equal(response.status,200);assert.equal(response.headers.get('Content-Type'),'image/jpeg');
+ }
+ assert.equal((await worker.fetch(new Request(ORIGIN+'/showcase/dashboard-floorplan-ar.jpg',{method:'POST'}),env)).status,404);
+ assert.deepEqual(requests,['GET','HEAD']);
+});
