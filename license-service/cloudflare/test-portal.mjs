@@ -14,7 +14,7 @@ function fixture(t){
  function call(path,data,extra={}){return worker.fetch(new Request(ORIGIN+path,{method:data===undefined?'GET':'POST',headers:{'Content-Type':'application/json',Origin:ORIGIN,...extra},...(data===undefined?{}:{body:JSON.stringify(data)})}),env);}
  return {env,db,call};
 }
-function form(){return {submission_id:crypto.randomUUID(),type:'license',plan:'3_months',name:'Test Customer',contact_method:'email',contact:'test@example.invalid',license_reference:'',message:'',consent:true,website:''};}
+function form(){return {submission_id:crypto.randomUUID(),type:'license',plan:'1_year',name:'Test Customer',contact_method:'email',contact:'test@example.invalid',license_reference:'',message:'',consent:true,website:''};}
 test('public six-page portal renders without secrets, with executable hashed scripts and local-only assets',async t=>{
  const {call}=fixture(t);
  for(const path of ['/','/license','/renew','/support','/patreon','/privacy']){
@@ -42,4 +42,20 @@ test('license host root remains admin redirect and public host has no public req
  const {env,call}=fixture(t);const response=await worker.fetch(new Request('https://licenses.smartnest.pro/'),env);assert.equal(response.status,302);assert.equal(response.headers.get('Location'),'https://licenses.smartnest.pro/admin');
  assert.equal((await call('/v1/public/requests')).status,404);assert.equal((await call('/v1/public/requests/SNREQ-example')).status,404);
  assert.equal((await call('/v1/admin/requests?unsupported=1',undefined,{Authorization:'Bearer '+ADMIN})).status,400);
+});
+test('annual offer and free calendar-month trial replace public legacy plans',async t=>{
+ const {call}=fixture(t);
+ const html=await (await call('/license')).text();
+ assert.match(html,/35 USD/);assert.match(html,/شهر تجربة مجاني/);assert.match(html,/Patreon/);
+ for(const plan of ['3_months','6_months','lifetime']){
+  assert.ok(!html.includes('value="'+plan+'"'));
+  assert.equal((await call('/v1/public/requests',{...form(),plan})).status,400);
+ }
+ assert.equal((await call('/v1/public/requests',{...form(),plan:'trial_month'})).status,201);
+ assert.equal((await call('/v1/public/requests',{...form(),type:'renewal',plan:'trial_month'})).status,400);
+ const created=await call('/v1/admin/licenses',{plan:'trial_month',customer_name:'Trial customer'},{Authorization:'Bearer '+ADMIN});
+ assert.equal(created.status,201);const record=await created.json();
+ const start=new Date(record.created_at*1000),end=new Date(record.expires_at*1000);
+ const target=new Date(start);const day=target.getUTCDate();target.setUTCDate(1);target.setUTCMonth(target.getUTCMonth()+1);const last=new Date(Date.UTC(target.getUTCFullYear(),target.getUTCMonth()+1,0)).getUTCDate();target.setUTCDate(Math.min(day,last));
+ assert.equal(end.getTime(),target.getTime());
 });
